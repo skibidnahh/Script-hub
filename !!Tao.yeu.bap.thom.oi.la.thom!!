@@ -13,7 +13,7 @@ local showVisual = false
 local espEnabled = false
 local isMinimized = false
 
--- Cấu hình trạng thái Aim Lock (ĐÃ CHUYỂN SANG KHÓA THÂN & MAX HARD LOCK)
+-- Cấu hình trạng thái Aim Lock
 local aimEnabled = false
 local isAimButtonLocked = false 
 local aiming = false
@@ -23,7 +23,10 @@ local target = nil
 local AIM_RANGE = 30
 local AIM_FOV = 45
 
--- Khởi tạo ScreenGui (Sửa lại để tương thích tốt nhất với Delta Mobile)
+-- DANH SÁCH BỎ QUA HITBOX (WHITELIST)
+local ignoredPlayers = {}
+
+-- Khởi tạo ScreenGui
 local sg = Instance.new("ScreenGui")
 sg.Name = "KaoyaHub_UltraHardLock"
 pcall(function()
@@ -54,7 +57,6 @@ local aimBtnStroke = Instance.new("UIStroke", aimActionButton)
 aimBtnStroke.Color = Color3.fromRGB(255, 255, 255)
 aimBtnStroke.Thickness = 1.5
 
--- Kéo thả di chuyển nút AIM khi ở trạng thái Mở Khóa (🔓)
 local aimDragging, aimDragStart, aimStartPos
 aimActionButton.InputBegan:Connect(function(input)
     if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and not isAimButtonLocked then
@@ -91,7 +93,8 @@ local function findTarget()
     local bestDist = math.huge
     
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer and plr.Character then
+        -- Bỏ qua bản thân và những người nằm trong danh sách tắt Hitbox
+        if plr ~= LocalPlayer and not ignoredPlayers[plr] and plr.Character then
             local root = plr.Character:FindFirstChild("HumanoidRootPart")
             local hum = plr.Character:FindFirstChild("Humanoid")
             
@@ -113,7 +116,7 @@ local function findTarget()
 end
 
 local function onHeartbeat()
-    if not aiming or not target or not target.body or not target.body.Parent then
+    if not aiming or not target or not target.body or not target.body.Parent or ignoredPlayers[target.player] then
         aiming = false
         target = nil
         aimActionButton.BackgroundColor3 = Color3.fromRGB(231, 76, 60)
@@ -124,12 +127,9 @@ local function onHeartbeat()
 
     local bodyPos = target.body.Position
     local currentPos = Camera.CFrame.Position
-    
-    -- KHÓA CHẾT CỨNG 100% VÀO THÂN
     Camera.CFrame = CFrame.lookAt(currentPos, bodyPos)
 end
 
--- Kích hoạt khi bấm vào nút AIM ngoài màn hình
 aimActionButton.MouseButton1Click:Connect(function()
     if not aimEnabled then return end
     
@@ -153,7 +153,7 @@ aimActionButton.MouseButton1Click:Connect(function()
 end)
 
 ----------------------------------------------------
--- THIẾT KẾ GIAO DIỆN CHÍNH (CÓ KHUNG CUỘN DANH SÁCH)
+-- THIẾT KẾ GIAO DIỆN CHÍNH
 ----------------------------------------------------
 local mainFrame = Instance.new("Frame")
 mainFrame.Size = UDim2.new(0, 310, 0, 220)
@@ -161,7 +161,7 @@ mainFrame.Position = UDim2.new(0.5, -155, 0.5, -110)
 mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
-mainFrame.ClipsDescendants = true
+mainFrame.ClipsDescendants = false -- Sửa thành false để menu phụ không bị cắt
 mainFrame.Parent = sg
 
 Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 4)
@@ -169,19 +169,11 @@ local mainStroke = Instance.new("UIStroke", mainFrame)
 mainStroke.Color = Color3.fromRGB(50, 50, 55)
 mainStroke.Thickness = 1
 
--- THANH TIÊU ĐỀ
 local topBar = Instance.new("Frame")
 topBar.Size = UDim2.new(1, 0, 0, 35)
 topBar.BackgroundColor3 = Color3.fromRGB(22, 22, 25)
 topBar.BorderSizePixel = 0
 topBar.Parent = mainFrame
-
-local topStroke = Instance.new("Frame")
-topStroke.Size = UDim2.new(1, 0, 0, 1)
-topStroke.Position = UDim2.new(0, 0, 1, -1)
-topStroke.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
-topStroke.BorderSizePixel = 0
-topStroke.Parent = topBar
 
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(0, 120, 1, 0)
@@ -226,7 +218,6 @@ toggleBtn.Font = Enum.Font.GothamBold
 toggleBtn.TextSize = 12
 toggleBtn.Parent = topBar
 
--- KHUNG CUỘN DANH SÁCH (ScrollingFrame) - Vuốt lên xuống mượt mà
 local contentFrame = Instance.new("ScrollingFrame")
 contentFrame.Size = UDim2.new(1, 0, 1, -35)
 contentFrame.Position = UDim2.new(0, 0, 0, 35)
@@ -235,9 +226,9 @@ contentFrame.BorderSizePixel = 0
 contentFrame.CanvasSize = UDim2.new(0, 0, 0, 220)
 contentFrame.ScrollBarThickness = 3
 contentFrame.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 85)
+contentFrame.ClipsDescendants = true
 contentFrame.Parent = mainFrame
 
--- Hitbox Controls
 local tb = Instance.new("TextBox")
 tb.Size = UDim2.new(0, 70, 0, 35)
 tb.Position = UDim2.new(0, 15, 0, 15)
@@ -262,8 +253,9 @@ enableBtn.BorderSizePixel = 0
 enableBtn.Parent = contentFrame
 Instance.new("UICorner", enableBtn).CornerRadius = UDim.new(0, 4)
 
+-- NÚT SHOW VISUAL ĐÃ ĐƯỢC THU NHỎ LẠI
 local showBtn = Instance.new("TextButton")
-showBtn.Size = UDim2.new(0, 265, 0, 35)
+showBtn.Size = UDim2.new(0, 220, 0, 35) 
 showBtn.Position = UDim2.new(0, 15, 0, 65)
 showBtn.Text = "SHOW VISUAL: OFF"
 showBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -273,6 +265,19 @@ showBtn.TextSize = 12
 showBtn.BorderSizePixel = 0
 showBtn.Parent = contentFrame
 Instance.new("UICorner", showBtn).CornerRadius = UDim.new(0, 4)
+
+-- NÚT MỞ MENU WHITELIST MỚI (BÊN CẠNH SHOW VISUAL)
+local wlToggleBtn = Instance.new("TextButton")
+wlToggleBtn.Size = UDim2.new(0, 35, 0, 35)
+wlToggleBtn.Position = UDim2.new(0, 245, 0, 65)
+wlToggleBtn.Text = "📋"
+wlToggleBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+wlToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+wlToggleBtn.Font = Enum.Font.GothamBold
+wlToggleBtn.TextSize = 16
+wlToggleBtn.BorderSizePixel = 0
+wlToggleBtn.Parent = contentFrame
+Instance.new("UICorner", wlToggleBtn).CornerRadius = UDim.new(0, 4)
 
 local espBtn = Instance.new("TextButton")
 espBtn.Size = UDim2.new(0, 265, 0, 35)
@@ -286,7 +291,6 @@ espBtn.BorderSizePixel = 0
 espBtn.Parent = contentFrame
 Instance.new("UICorner", espBtn).CornerRadius = UDim.new(0, 4)
 
--- NÚT BẬT TẮT AIMBOT
 local aimBtn = Instance.new("TextButton")
 aimBtn.Size = UDim2.new(0, 220, 0, 35)
 aimBtn.Position = UDim2.new(0, 15, 0, 165)
@@ -299,7 +303,6 @@ aimBtn.BorderSizePixel = 0
 aimBtn.Parent = contentFrame
 Instance.new("UICorner", aimBtn).CornerRadius = UDim.new(0, 4)
 
--- NÚT KHÓA DI CHUYỂN
 local lockBtn = Instance.new("TextButton")
 lockBtn.Size = UDim2.new(0, 35, 0, 35)
 lockBtn.Position = UDim2.new(0, 245, 0, 165)
@@ -311,6 +314,114 @@ lockBtn.TextSize = 16
 lockBtn.BorderSizePixel = 0
 lockBtn.Parent = contentFrame
 Instance.new("UICorner", lockBtn).CornerRadius = UDim.new(0, 4)
+
+----------------------------------------------------
+-- THIẾT KẾ MENU WHITELIST (DANH SÁCH NGƯỜI CHƠI)
+----------------------------------------------------
+local wlFrame = Instance.new("Frame")
+wlFrame.Size = UDim2.new(0, 200, 0, 220)
+wlFrame.Position = UDim2.new(1, 10, 0, 0) -- Nằm bên phải menu chính
+wlFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
+wlFrame.BorderSizePixel = 0
+wlFrame.Visible = false
+wlFrame.Parent = mainFrame
+Instance.new("UICorner", wlFrame).CornerRadius = UDim.new(0, 4)
+Instance.new("UIStroke", wlFrame).Color = Color3.fromRGB(50, 50, 55)
+
+local wlTopBar = Instance.new("Frame")
+wlTopBar.Size = UDim2.new(1, 0, 0, 35)
+wlTopBar.BackgroundColor3 = Color3.fromRGB(22, 22, 25)
+wlTopBar.BorderSizePixel = 0
+wlTopBar.Parent = wlFrame
+Instance.new("UICorner", wlTopBar).CornerRadius = UDim.new(0, 4)
+
+local wlTitle = Instance.new("TextLabel")
+wlTitle.Size = UDim2.new(1, -10, 1, 0)
+wlTitle.Position = UDim2.new(0, 10, 0, 0)
+wlTitle.BackgroundTransparency = 1
+wlTitle.Text = "PLAYER LIST"
+wlTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+wlTitle.Font = Enum.Font.GothamBold
+wlTitle.TextSize = 12
+wlTitle.TextXAlignment = Enum.TextXAlignment.Left
+wlTitle.Parent = wlTopBar
+
+local wlScroll = Instance.new("ScrollingFrame")
+wlScroll.Size = UDim2.new(1, 0, 1, -40)
+wlScroll.Position = UDim2.new(0, 0, 0, 40)
+wlScroll.BackgroundTransparency = 1
+wlScroll.BorderSizePixel = 0
+wlScroll.ScrollBarThickness = 2
+wlScroll.Parent = wlFrame
+
+-- Hàm làm mới danh sách người chơi
+local function refreshWhitelist()
+    for _, child in pairs(wlScroll:GetChildren()) do
+        if child:IsA("TextButton") then child:Destroy() end
+    end
+    
+    local yPos = 0
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            local pBtn = Instance.new("TextButton")
+            pBtn.Size = UDim2.new(1, -10, 0, 30)
+            pBtn.Position = UDim2.new(0, 5, 0, yPos)
+            pBtn.Font = Enum.Font.GothamSemibold
+            pBtn.TextSize = 11
+            Instance.new("UICorner", pBtn).CornerRadius = UDim.new(0, 4)
+            pBtn.Parent = wlScroll
+            
+            -- Xử lý hiển thị ban đầu dựa trên trạng thái
+            if ignoredPlayers[plr] then
+                pBtn.BackgroundColor3 = Color3.fromRGB(192, 57, 43) -- Màu Đỏ (Tắt)
+                pBtn.Text = plr.DisplayName .. " [OFF]"
+                pBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            else
+                pBtn.BackgroundColor3 = Color3.fromRGB(39, 174, 96) -- Màu Xanh (Bật)
+                pBtn.Text = plr.DisplayName .. " [ON]"
+                pBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            end
+            
+            -- Sự kiện click vào tên
+            pBtn.MouseButton1Click:Connect(function()
+                ignoredPlayers[plr] = not ignoredPlayers[plr]
+                if ignoredPlayers[plr] then
+                    pBtn.BackgroundColor3 = Color3.fromRGB(192, 57, 43)
+                    pBtn.Text = plr.DisplayName .. " [OFF]"
+                    -- Reset hitbox người này ngay lập tức
+                    if plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+                        local root = plr.Character.HumanoidRootPart
+                        root.Size = Vector3.new(2, 2, 1)
+                        root.Transparency = 1
+                        root.CanCollide = true
+                        root.Material = Enum.Material.Plastic
+                    end
+                else
+                    pBtn.BackgroundColor3 = Color3.fromRGB(39, 174, 96)
+                    pBtn.Text = plr.DisplayName .. " [ON]"
+                end
+            end)
+            yPos = yPos + 35
+        end
+    end
+    wlScroll.CanvasSize = UDim2.new(0, 0, 0, yPos)
+end
+
+-- Bật/Tắt Menu Player List
+wlToggleBtn.MouseButton1Click:Connect(function()
+    wlFrame.Visible = not wlFrame.Visible
+    if wlFrame.Visible then
+        refreshWhitelist()
+    end
+end)
+
+-- Xóa dữ liệu khi người chơi thoát
+Players.PlayerRemoving:Connect(function(plr)
+    if ignoredPlayers[plr] ~= nil then
+        ignoredPlayers[plr] = nil
+    end
+    if wlFrame.Visible then refreshWhitelist() end
+end)
 
 ----------------------------------------------------
 -- LOGIC HỆ THỐNG
@@ -373,6 +484,7 @@ toggleBtn.MouseButton1Click:Connect(function()
     isMinimized = not isMinimized
     if isMinimized then
         contentFrame.Visible = false
+        wlFrame.Visible = false -- Tắt luôn bảng phụ nếu thu nhỏ
         mainFrame:TweenSize(UDim2.new(0, 310, 0, 35), Enum.EasingDirection.Out, Enum.EasingStyle.Quart, 0.2, true)
         toggleBtn.Text = "+"
     else
@@ -414,7 +526,7 @@ lockBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- Cập nhật thông số FPS/Ping công khai
+-- Update FPS/Ping
 local lastUpdate = os.clock()
 local frameCount = 0
 RunService.RenderStepped:Connect(function()
@@ -466,7 +578,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 ----------------------------------------------------
--- VÒNG LẶP HITBOX VÀ ESP穩定
+-- VÒNG LẶP HITBOX VÀ ESP
 ----------------------------------------------------
 RunService.Heartbeat:Connect(function()
     if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
@@ -476,23 +588,35 @@ RunService.Heartbeat:Connect(function()
             local char = plr.Character
             local root = char:FindFirstChild("HumanoidRootPart")
             
-            if enabled and root then
-                root.Size = Vector3.new(size, size, size)
-                root.CanCollide = false
-                
-                if showVisual then
-                    root.Transparency = 0.65 
-                    root.Color = Color3.fromHex("#C0C0C0") 
-                    root.Material = Enum.Material.Neon 
-                else
+            -- LOGIC MỚI: Kiểm tra danh sách bỏ qua (Whitelist)
+            if ignoredPlayers[plr] then
+                if root then
+                    root.Size = Vector3.new(2, 2, 1)
                     root.Transparency = 1
+                    root.CanCollide = true
                     root.Material = Enum.Material.Plastic
                 end
-            elseif not enabled and root then
-                root.Size = Vector3.new(2, 2, 1)
-                root.Transparency = 1
+            else
+                -- LOGIC HITBOX BÌNH THƯỜNG
+                if enabled and root then
+                    root.Size = Vector3.new(size, size, size)
+                    root.CanCollide = false
+                    
+                    if showVisual then
+                        root.Transparency = 0.65 
+                        root.Color = Color3.fromHex("#C0C0C0") 
+                        root.Material = Enum.Material.Neon 
+                    else
+                        root.Transparency = 1
+                        root.Material = Enum.Material.Plastic
+                    end
+                elseif not enabled and root then
+                    root.Size = Vector3.new(2, 2, 1)
+                    root.Transparency = 1
+                end
             end
 
+            -- LOGIC ESP
             if espEnabled then
                 local hl = char:FindFirstChild("HitboxESP")
                 if not hl then
