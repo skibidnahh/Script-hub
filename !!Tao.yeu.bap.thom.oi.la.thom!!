@@ -599,12 +599,10 @@ RunService.RenderStepped:Connect(function()
                 hrp.CanCollide = false
 
                 if showVisual then
-    root.Transparency = 0.7
-    root.Material = Enum.Material.Plastic
-else
-    root.Transparency = 1
-    root.Material = Enum.Material.Plastic
-end
+                    hrp.Transparency = 0.7
+                    hrp.Color = Color3.fromHex("#C0C0C0")
+                    hrp.Transparency = 1
+                end
             else
                 hrp.Size = Vector3.new(2, 2, 1)
                 hrp.Transparency = 1
