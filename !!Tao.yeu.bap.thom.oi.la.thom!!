@@ -586,7 +586,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 ----------------------------------------------------
--- VÒNG LẶP HITBOX (LOGIC MỚI)
+-- VÒNG LẶP HITBOX (LOGIC MỚI - ĐÃ FIX VISUAL)
 ----------------------------------------------------
 RunService.RenderStepped:Connect(function()
     for _, p in pairs(Players:GetPlayers()) do
@@ -599,9 +599,11 @@ RunService.RenderStepped:Connect(function()
                 hrp.CanCollide = false
 
                 if showVisual then
-                    hrp.Transparency = 0.7
+                    hrp.Transparency = 0.5 -- Chỉnh lại mức 0.5 cho dễ nhìn hơn
                     hrp.Color = Color3.fromHex("#C0C0C0")
-                    hrp.Transparency = 1
+                    -- hrp.Material = Enum.Material.ForceField -- (Tùy chọn: bỏ dấu -- ở đầu để viền hitbox ngầu hơn)
+                else
+                    hrp.Transparency = 1 -- Ẩn tàng hình khi tắt Visual
                 end
             else
                 hrp.Size = Vector3.new(2, 2, 1)
