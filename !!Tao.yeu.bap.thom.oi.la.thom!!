@@ -599,7 +599,7 @@ RunService.RenderStepped:Connect(function()
                 hrp.CanCollide = false
 
                 if showVisual then
-                    hrp.Transparency = 0.5 -- Chỉnh lại mức 0.5 cho dễ nhìn hơn
+                    hrp.Transparency = 0.3 -- Chỉnh lại mức 0.3 cho dễ nhìn hơn
                     hrp.Color = Color3.fromHex("#C0C0C0")
                     -- hrp.Material = Enum.Material.ForceField -- (Tùy chọn: bỏ dấu -- ở đầu để viền hitbox ngầu hơn)
                 else
