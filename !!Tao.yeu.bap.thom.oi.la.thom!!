@@ -53,22 +53,34 @@ local aimBtnStroke = Instance.new("UIStroke", aimActionButton)
 aimBtnStroke.Color = Color3.fromRGB(50, 50, 55)
 aimBtnStroke.Thickness = 1.5
 
-local aimDragging, aimDragStart, aimStartPos
+-- FIX: Đổi tên biến cho rõ ràng
+local aimDragging = false
+local aimDragStart = nil
+local aimStartPos = nil
+
 aimActionButton.InputBegan:Connect(function(input)
     if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and not isAimButtonLocked then
         aimDragging = true
         aimDragStart = input.Position
         aimStartPos = aimActionButton.Position
         input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then aimDragging = false end
+            if input.UserInputState == Enum.UserInputState.End then 
+                aimDragging = false 
+            end
         end)
     end
 end)
 
 UserInputService.InputChanged:Connect(function(input)
     if aimDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStart
-        aimActionButton.Position = UDim2.new(aimStartPos.X.Scale, aimStartPos.X.Offset + delta.X, aimStartPos.Y.Scale, startPos and aimStartPos.Y.Offset + delta.Y or aimStartPos.Y.Offset + delta.Y)
+        -- FIX: Sửa dragStart thành aimDragStart
+        local delta = input.Position - aimDragStart
+        aimActionButton.Position = UDim2.new(
+            aimStartPos.X.Scale, 
+            aimStartPos.X.Offset + delta.X, 
+            aimStartPos.Y.Scale, 
+            aimStartPos.Y.Offset + delta.Y
+        )
     end
 end)
 
@@ -90,6 +102,7 @@ local function findTarget()
             local root = plr.Character:FindFirstChild("HumanoidRootPart")
             local hum = plr.Character:FindFirstChild("Humanoid")
             
+            -- FIX: Thêm kiểm tra nhân vật đã chết
             if root and hum and hum.Health > 0 then
                 local dist = (root.Position - rootPos).Magnitude
                 if dist > AIM_RANGE then continue end
@@ -525,9 +538,13 @@ RunService.RenderStepped:Connect(function()
     if now - lastUpdate >= 0.5 then
         local fps = math.floor(frameCount / (now - lastUpdate))
         fpsLabel.Text = "FPS: " .. fps
-        if fps >= 50 then fpsLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
-        elseif fps >= 30 then fpsLabel.TextColor3 = Color3.fromRGB(241, 196, 15)
-        else fpsLabel.TextColor3 = Color3.fromRGB(231, 76, 60) end
+        if fps >= 50 then 
+            fpsLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
+        elseif fps >= 30 then 
+            fpsLabel.TextColor3 = Color3.fromRGB(241, 196, 15)
+        else 
+            fpsLabel.TextColor3 = Color3.fromRGB(231, 76, 60) 
+        end
         frameCount = 0
         lastUpdate = now
     end
@@ -538,30 +555,44 @@ task.spawn(function()
         if LocalPlayer then
             local ping = math.floor(LocalPlayer:GetNetworkPing() * 1000)
             pingLabel.Text = ping .. " ms"
-            if ping < 80 then pingLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
-            elseif ping < 150 then pingLabel.TextColor3 = Color3.fromRGB(241, 196, 15)
-            else pingLabel.TextColor3 = Color3.fromRGB(231, 76, 60) end
+            if ping < 80 then 
+                pingLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
+            elseif ping < 150 then 
+                pingLabel.TextColor3 = Color3.fromRGB(241, 196, 15)
+            else 
+                pingLabel.TextColor3 = Color3.fromRGB(231, 76, 60) 
+            end
         end
     end
 end)
 
 -- DI CHUYỂN MENU CHÍNH
-local dragging, dragInput, dragStart, startPos
+local mainDragging = false
+local mainDragStart = nil
+local mainStartPos = nil
+
 topBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = mainFrame.Position
+        mainDragging = true
+        mainDragStart = input.Position
+        mainStartPos = mainFrame.Position
         input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            if input.UserInputState == Enum.UserInputState.End then 
+                mainDragging = false 
+            end
         end)
     end
 end)
 
 UserInputService.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStart
-        mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    if mainDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - mainDragStart
+        mainFrame.Position = UDim2.new(
+            mainStartPos.X.Scale, 
+            mainStartPos.X.Offset + delta.X, 
+            mainStartPos.Y.Scale, 
+            mainStartPos.Y.Offset + delta.Y
+        )
     end
 end)
 
@@ -578,7 +609,7 @@ RunService.RenderStepped:Connect(function()
                         hrp.Size = Vector3.new(size, size, size)
                         hrp.CanCollide = false
                         if showVisual then
-                            hrp.Transparency = 0.5 -- Đã sửa thành 0.5 để hiện màu xám bạc mờ mờ vừa mắt
+                            hrp.Transparency = 0.5
                             hrp.Color = Color3.fromHex("#C0C0C0")
                             hrp.Material = Enum.Material.SmoothPlastic
                         else
