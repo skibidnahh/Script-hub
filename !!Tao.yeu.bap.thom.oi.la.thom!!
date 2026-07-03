@@ -7,11 +7,10 @@ local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
 -- ====================================================
--- CẤU HÌNH AIMBOT GHÌ CỨNG & ỔN ĐỊNH V3
+-- CẤU HÌNH AIMBOT SIÊU GHÌ CỨNG DÀNH CHO MOBILE V3
 -- ====================================================
-local AIM_SMOOTHNESS = 0.4  -- ĐỘ CỨNG (0.4 là cực cứng, bám chết mục tiêu không độ trễ nhưng không giật camera)
-local AIM_RANGE = 120       -- Tầm quét bắt người
-local AIM_FOV = 50          -- Vòng quét tâm
+local AIM_RANGE = 250       -- Khoảng cách bắt mục tiêu tối ưu trên Mobile
+local AIM_FOV = 75          -- Vòng quét tâm rộng hơn giúp ngón tay dễ quét trúng đối thủ
 
 local size = 25
 local enabled = false
@@ -27,7 +26,7 @@ local ignoredPlayers = {}
 
 -- Khởi tạo ScreenGui
 local sg = Instance.new("ScreenGui")
-sg.Name = "KaoyaHub_HardStable_V3"
+sg.Name = "KaoyaHub_MobileHard_V3"
 pcall(function() sg.Parent = game:GetService("CoreGui") end)
 if not sg.Parent then sg.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 sg.ResetOnSpawn = false
@@ -36,13 +35,13 @@ sg.ResetOnSpawn = false
 -- NÚT BẤM AIM TRÒN (KAOYA HUB STYLE)
 ----------------------------------------------------
 local aimActionButton = Instance.new("TextButton")
-aimActionButton.Size = UDim2.new(0, 65, 0, 65)
-aimActionButton.Position = UDim2.new(0.7, 0, 0.6, 0)
+aimActionButton.Size = UDim2.new(0, 70, 0, 70) -- Tăng nhẹ kích thước cho dễ bấm trên màn hình cảm ứng
+aimActionButton.Position = UDim2.new(0.7, 0, 0.5, 0)
 aimActionButton.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
 aimActionButton.TextColor3 = Color3.fromRGB(200, 200, 200)
 aimActionButton.Text = "AIM"
 aimActionButton.Font = Enum.Font.GothamBold
-aimActionButton.TextSize = 11
+aimActionButton.TextSize = 12
 aimActionButton.Visible = false
 aimActionButton.ZIndex = 10
 aimActionButton.Parent = sg
@@ -69,12 +68,12 @@ end)
 UserInputService.InputChanged:Connect(function(input)
     if aimDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - aimDragStart
-        aimActionButton.Position = UDim2.new(aimStartPos.X.Scale, aimStartPos.X.Offset + delta.X, aimStartPos.Y.Scale, aimStartPos.Y.Offset + delta.Y)
+        aimActionButton.Position = UDim2.new(aimStartPos.X.Scale, aimStartPos.X.Offset + delta.X, aimStartPos.Y.Scale, startPos and aimStartPos.Y.Offset + delta.Y or aimStartPos.Y.Offset + delta.Y)
     end
 end)
 
 ----------------------------------------------------
--- THUẬT TOÁN QUÉT MỤC TIÊU
+-- THUẬT TOÁN QUÉT MỤC TIÊU MOBILE CHUẨN XÁC
 ----------------------------------------------------
 local function findTarget()
     local char = LocalPlayer.Character
@@ -95,10 +94,11 @@ local function findTarget()
                 local dist = (root.Position - rootPos).Magnitude
                 if dist > AIM_RANGE then continue end
                 
-                local dir = (root.Position - rootPos).Unit
-                local angle = math.acos(math.clamp(dir:Dot(camLook), -1, 1))
+                local dir = (root.Position - Camera.CFrame.Position).Unit
+                local angle = math.deg(math.acos(math.clamp(dir:Dot(camLook), -1, 1)))
                 
-                if angle <= math.rad(AIM_FOV) and dist < bestDist then
+                -- Khóa mục tiêu gần tâm màn hình nhất
+                if angle <= AIM_FOV and dist < bestDist then
                     bestDist = dist
                     bestTarget = {player = plr, body = root}
                 end
@@ -108,10 +108,10 @@ local function findTarget()
     return bestTarget
 end
 
--- VÒNG LẶP KHÓA CỨNG + CHỐNG RUNG LỖI MÀN HÌNH
+-- VÒNG LẶP KHÓA CỨNG TUYỆT ĐỐI (ANTI-SHAKE MOBILE)
 local function UpdateAimLock()
     if not aimEnabled or not aiming then
-        pcall(function() RunService:UnbindFromRenderStep("KaoyaHub_HardLock") end)
+        pcall(function() RunService:UnbindFromRenderStep("KaoyaHub_MobileLock") end)
         target = nil
         aiming = false
         aimActionButton.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
@@ -121,7 +121,20 @@ local function UpdateAimLock()
         return
     end
 
-    if not target then
+    local char = LocalPlayer.Character
+    local localRoot = char and char:FindFirstChild("HumanoidRootPart")
+    
+    local validTarget = target and target.body and target.body.Parent and target.player.Character and not ignoredPlayers[target.player]
+    if validTarget then
+        local hum = target.player.Character:FindFirstChild("Humanoid")
+        if not hum or hum.Health <= 0 then validTarget = false end
+        if localRoot and validTarget then
+            local dist = (target.body.Position - localRoot.Position).Magnitude
+            if dist > AIM_RANGE then validTarget = false end 
+        end
+    end
+
+    if not validTarget then
         target = findTarget()
         if not target then
             aimActionButton.BackgroundColor3 = Color3.fromRGB(22, 22, 25)
@@ -132,34 +145,18 @@ local function UpdateAimLock()
         end
     end
 
-    local char = LocalPlayer.Character
-    local localRoot = char and char:FindFirstChild("HumanoidRootPart")
-    local validTarget = target and target.body and target.body.Parent and target.player.Character and not ignoredPlayers[target.player]
-    
-    if validTarget then
-        local hum = target.player.Character:FindFirstChild("Humanoid")
-        if not hum or hum.Health <= 0 then validTarget = false end
-        if localRoot and validTarget then
-            local dist = (target.body.Position - localRoot.Position).Magnitude
-            if dist > 1000 then validTarget = false end 
-        end
-    end
-
-    if not validTarget then
-        target = nil
-        return
-    end
-
-    -- THỰC THI KHÓA GHÌ CHẮC CHẮN
+    -- THỰC THI KHÓA KHÔNG ĐỘ TRỄ (GẮN CHẾT CAMERA)
     if target and target.body then
         aimActionButton.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
         aimBtnStroke.Color = Color3.fromRGB(39, 174, 96)
         aimActionButton.TextColor3 = Color3.fromRGB(39, 174, 96)
         aimActionButton.Text = "LOCK\n" .. string.upper(string.sub(target.player.DisplayName, 1, 5))
         
-        -- Cập nhật góc nhìn gắt hơn, triệt tiêu độ trễ trôi tâm của bản cũ
-        local targetLookCFrame = CFrame.lookAt(Camera.CFrame.Position, target.body.Position)
-        Camera.CFrame = Camera.CFrame:Lerp(targetLookCFrame, AIM_SMOOTHNESS)
+        -- Giải pháp khóa cứng tuyệt đối: Gán trực tiếp CFrame kết hợp bù trừ gia tốc di chuyển
+        local targetVelocity = target.body.AssemblyLinearVelocity * 0.03
+        local finalTargetPos = target.body.Position + targetVelocity
+        
+        Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, finalTargetPos)
     end
 end
 
@@ -167,9 +164,10 @@ aimActionButton.MouseButton1Click:Connect(function()
     if not aimEnabled then return end
     aiming = not aiming
     if aiming then
-        RunService:BindToRenderStep("KaoyaHub_HardLock", Enum.RenderPriority.Camera.Value + 1, UpdateAimLock)
+        -- Chạy ở chế độ ưu tiên cao nhất sau khi Camera cập nhật để đè hoàn toàn cảm ứng Mobile
+        RunService:BindToRenderStep("KaoyaHub_MobileLock", Enum.RenderPriority.Camera.Value + 1, UpdateAimLock)
     else
-        pcall(function() RunService:UnbindFromRenderStep("KaoyaHub_HardLock") end)
+        pcall(function() RunService:UnbindFromRenderStep("KaoyaHub_MobileLock") end)
         target = nil
         aimActionButton.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
         aimBtnStroke.Color = Color3.fromRGB(50, 50, 55)
@@ -179,11 +177,11 @@ aimActionButton.MouseButton1Click:Connect(function()
 end)
 
 ----------------------------------------------------
--- THIẾT KẾ GIAO DIỆN CHÍNH (ĐÃ FIX MÀU SẮC)
+-- THIẾT KẾ GIAO DIỆN CHÍNH
 ----------------------------------------------------
 local mainFrame = Instance.new("Frame")
 mainFrame.Size = UDim2.new(0, 310, 0, 220)
-mainFrame.Position = UDim2.new(0.5, -155, 0.5, -110)
+mainFrame.Position = UDim2.new(0.5, -155, 0.4, -110)
 mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
@@ -204,7 +202,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(0, 120, 1, 0)
 title.Position = UDim2.new(0, 12, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "KAOYA HUB V3"
+title.Text = "KAOYA HUB MOBILE"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -216,7 +214,7 @@ fpsLabel.Size = UDim2.new(0, 60, 1, 0)
 fpsLabel.Position = UDim2.new(1, -170, 0, 0)
 fpsLabel.BackgroundTransparency = 1
 fpsLabel.Text = "FPS: --"
-fpsLabel.TextColor3 = Color3.fromRGB(46, 204, 113) -- Màu mặc định ban đầu
+fpsLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
 fpsLabel.Font = Enum.Font.GothamMedium
 fpsLabel.TextSize = 12
 fpsLabel.TextXAlignment = Enum.TextXAlignment.Right
@@ -227,7 +225,7 @@ pingLabel.Size = UDim2.new(0, 70, 1, 0)
 pingLabel.Position = UDim2.new(1, -105, 0, 0)
 pingLabel.BackgroundTransparency = 1
 pingLabel.Text = "--- ms"
-pingLabel.TextColor3 = Color3.fromRGB(46, 204, 113) -- Màu mặc định ban đầu
+pingLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
 pingLabel.Font = Enum.Font.GothamMedium
 pingLabel.TextSize = 12
 pingLabel.TextXAlignment = Enum.TextXAlignment.Right
@@ -421,7 +419,7 @@ wlToggleBtn.MouseButton1Click:Connect(function()
 end)
 
 ----------------------------------------------------
--- LOGIC KHÁC & HỆ THỐNG GIAO DIỆN
+-- LOGIC KHÁC & GIAO DIỆN MÀU SẮC
 ----------------------------------------------------
 local function resetAll()
     for _, plr in ipairs(Players:GetPlayers()) do
@@ -504,7 +502,7 @@ aimBtn.MouseButton1Click:Connect(function()
         aimBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
         aimActionButton.Visible = false
         aiming = false
-        pcall(function() RunService:UnbindFromRenderStep("KaoyaHub_HardLock") end)
+        pcall(function() RunService:UnbindFromRenderStep("KaoyaHub_MobileLock") end)
         target = nil
         aimActionButton.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
         aimBtnStroke.Color = Color3.fromRGB(50, 50, 55)
@@ -523,7 +521,7 @@ lockBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- ĐÃ FIX: KHÔI PHỤC ĐẦY ĐỦ LOGIC MÀU SẮC CHO FPS VÀ PING
+-- UPDATE FPS & PING
 local lastUpdate = os.clock()
 local frameCount = 0
 RunService.RenderStepped:Connect(function()
@@ -532,16 +530,9 @@ RunService.RenderStepped:Connect(function()
     if now - lastUpdate >= 0.5 then
         local fps = math.floor(frameCount / (now - lastUpdate))
         fpsLabel.Text = "FPS: " .. fps
-        
-        -- Logic chuyển màu FPS nhạy bén
-        if fps >= 50 then
-            fpsLabel.TextColor3 = Color3.fromRGB(46, 204, 113) -- Xanh mượt
-        elseif fps >= 30 then
-            fpsLabel.TextColor3 = Color3.fromRGB(241, 196, 15) -- Vàng hơi khựng
-        else
-            fpsLabel.TextColor3 = Color3.fromRGB(231, 76, 60)  -- Đỏ sụt nguồn
-        end
-        
+        if fps >= 50 then fpsLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
+        elseif fps >= 30 then fpsLabel.TextColor3 = Color3.fromRGB(241, 196, 15)
+        else fpsLabel.TextColor3 = Color3.fromRGB(231, 76, 60) end
         frameCount = 0
         lastUpdate = now
     end
@@ -552,20 +543,14 @@ task.spawn(function()
         if LocalPlayer then
             local ping = math.floor(LocalPlayer:GetNetworkPing() * 1000)
             pingLabel.Text = ping .. " ms"
-            
-            -- Logic chuyển màu Ping theo kết nối
-            if ping < 80 then
-                pingLabel.TextColor3 = Color3.fromRGB(46, 204, 113) -- Ngon
-            elseif ping < 150 then
-                pingLabel.TextColor3 = Color3.fromRGB(241, 196, 15) -- Tạm ổn
-            else
-                pingLabel.TextColor3 = Color3.fromRGB(231, 76, 60)  -- Sắp bay màu
-            end
+            if ping < 80 then pingLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
+            elseif ping < 150 then pingLabel.TextColor3 = Color3.fromRGB(241, 196, 15)
+            else pingLabel.TextColor3 = Color3.fromRGB(231, 76, 60) end
         end
     end
 end)
 
--- Di chuyển Menu chính
+-- DI CHUYỂN MENU CHÍNH
 local dragging, dragInput, dragStart, startPos
 topBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -586,24 +571,21 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 ----------------------------------------------------
--- VÒNG LẶP HITBOX (LOGIC MỚI - ĐÃ FIX VISUAL)
+-- VÒNG LẶP HITBOX
 ----------------------------------------------------
 RunService.RenderStepped:Connect(function()
     for _, p in pairs(Players:GetPlayers()) do
         if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
             local hrp = p.Character.HumanoidRootPart
 
-            -- Hitbox
             if enabled and not ignoredPlayers[p] then
                 hrp.Size = Vector3.new(size, size, size)
                 hrp.CanCollide = false
-
                 if showVisual then
-                    hrp.Transparency = 0.3 -- Chỉnh lại mức 0.3 cho dễ nhìn hơn
+                    hrp.Transparency = 0.3
                     hrp.Color = Color3.fromHex("#C0C0C0")
-                    -- hrp.Material = Enum.Material.ForceField -- (Tùy chọn: bỏ dấu -- ở đầu để viền hitbox ngầu hơn)
                 else
-                    hrp.Transparency = 1 -- Ẩn tàng hình khi tắt Visual
+                    hrp.Transparency = 1
                 end
             else
                 hrp.Size = Vector3.new(2, 2, 1)
@@ -611,7 +593,6 @@ RunService.RenderStepped:Connect(function()
                 hrp.CanCollide = true
             end
 
-            -- ESP
             if espEnabled then
                 local hl = p.Character:FindFirstChild("HitboxESP")
                 if not hl then
@@ -624,9 +605,7 @@ RunService.RenderStepped:Connect(function()
                 end
             else
                 local hl = p.Character:FindFirstChild("HitboxESP")
-                if hl then
-                    hl:Destroy()
-                end
+                if hl then hl:Destroy() end
             end
         end
     end
