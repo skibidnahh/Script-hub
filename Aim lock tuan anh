@@ -1,0 +1,532 @@
+local Password_Layer1 = "TuanAnh" -- Mật khẩu lớp 1
+local Password_Layer2 = "2602"      -- Mã PIN lớp 2
+
+local Player = game.Players.LocalPlayer
+local RS, RunService, UIS = game:GetService("ReplicatedStorage"), game:GetService("RunService"), game:GetService("UserInputService")
+local VIM = game:GetService("VirtualInputManager")
+local CombatRemote = RS:FindFirstChild("CombatRemote")
+local ActionRemote = RS:FindFirstChild("ActionRemote")
+local CAS = game:GetService("ContextActionService")
+
+local IsTelePro, IsNoclip, IsInfJump, IsSpeedHack, IsAutoClick = false, false, true, true, false
+local IsAntiStun = false; local NoclipTimer = 0; local OX, OY, OZ = 0, 10, 0; local CurrentWS = 120
+local IsHitboxAll, HBS, IgnoreList = true, 28, {}
+local AutoFarmActive, SpamEActive = false, false
+local TargetPos = Vector3.new(518.2, 4.2, 150.2); local Speed = 300; local IsForceRespawn = false
+local BMode = 1 
+local SpawnTime = tick() 
+
+--// AIM LOCK VARIABLES
+local IsAimLock = false
+local AimConnection = nil
+local AimTarget = nil
+local AIM_RANGE = 50
+local AIM_FOV = 60
+local AUTO_SWITCH_DELAY = 0.1
+local PRIORITY_DISTANCE_THRESHOLD = 15
+local AimProtected = {}
+local AimLastPosition = nil
+local AimSwitchCooldown = 0
+
+--// GIAO DIỆN KHỞI TẠO KHUNG CHỨA
+local SG = Instance.new("ScreenGui", game.CoreGui)
+
+--// KHUNG NHẬP MẬT KHẨU (LOGIN WINDOW)
+local LoginFrame = Instance.new("Frame", SG)
+LoginFrame.Size = UDim2.new(0, 260, 0, 160)
+LoginFrame.Position = UDim2.new(0.5, -130, 0.5, -80)
+LoginFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+Instance.new("UICorner", LoginFrame)
+
+local LoginTitle = Instance.new("TextLabel", LoginFrame)
+LoginTitle.Size = UDim2.new(1, 0, 0, 40)
+LoginTitle.Text = "BẢO MẬT 2 LỚP (1/2)"
+LoginTitle.BackgroundTransparency = 1
+LoginTitle.TextColor3 = Color3.fromRGB(212, 175, 55)
+LoginTitle.Font = Enum.Font.GothamBlack
+LoginTitle.TextSize = 15
+
+local PassInput = Instance.new("TextBox", LoginFrame)
+PassInput.Size = UDim2.new(0, 220, 0, 35)
+PassInput.Position = UDim2.new(0, 20, 0, 50)
+PassInput.Text = ""
+PassInput.PlaceholderText = "Nhập mật khẩu lớp 1..."
+PassInput.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+PassInput.TextColor3 = Color3.new(1, 1, 1)
+Instance.new("UICorner", PassInput)
+
+local LoginBtn = Instance.new("TextButton", LoginFrame)
+LoginBtn.Size = UDim2.new(0, 220, 0, 35)
+LoginBtn.Position = UDim2.new(0, 20, 0, 100)
+LoginBtn.Text = "TIẾP THEO"
+LoginBtn.BackgroundColor3 = Color3.fromRGB(100, 0, 0)
+LoginBtn.TextColor3 = Color3.new(1, 1, 1)
+LoginBtn.Font = Enum.Font.GothamBold
+LoginBtn.TextSize = 14
+Instance.new("UICorner", LoginBtn)
+
+-- Xử lý xác thực mã nguồn 2 lớp
+local IsAuthed = false
+local CurrentLayer = 1
+
+LoginBtn.MouseButton1Click:Connect(function()
+    if CurrentLayer == 1 then
+        if PassInput.Text == Password_Layer1 then
+            CurrentLayer = 2
+            PassInput.Text = ""
+            LoginTitle.Text = "BẢO MẬT 2 LỚP (2/2)"
+            PassInput.PlaceholderText = "Nhập mã PIN lớp 2..."
+            LoginBtn.Text = "XÁC NHẬN ĐĂNG NHẬP"
+            LoginBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 0)
+            task.wait(0.5)
+            LoginBtn.BackgroundColor3 = Color3.fromRGB(100, 0, 0)
+        else
+            LoginBtn.Text = "SAI MẬT KHẨU LỚP 1!"
+            LoginBtn.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
+            task.wait(1.2)
+            LoginBtn.Text = "TIẾP THEO"
+            LoginBtn.BackgroundColor3 = Color3.fromRGB(100, 0, 0)
+        end
+    elseif CurrentLayer == 2 then
+        if PassInput.Text == Password_Layer2 then
+            IsAuthed = true
+        else
+            LoginBtn.Text = "SAI MÃ PIN LỚP 2!"
+            LoginBtn.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
+            task.wait(1.2)
+            LoginBtn.Text = "XÁC NHẬN ĐĂNG NHẬP"
+            LoginBtn.BackgroundColor3 = Color3.fromRGB(100, 0, 0)
+        end
+    end
+end)
+
+-- Chờ xác thực xong cả 2 lớp mới mở Menu chính
+repeat task.wait() until IsAuthed
+LoginFrame:Destroy()
+
+--// GIAO DIỆN CHÍNH (Chỉ chạy sau khi đăng nhập thành công)
+local Toggle = Instance.new("TextButton", SG); Toggle.Size = UDim2.new(0, 45, 0, 45); Toggle.Position = UDim2.new(0, 10, 0.5, -22); Toggle.Text = "T.A"; Toggle.BackgroundColor3 = Color3.fromRGB(30, 30, 30); Toggle.TextColor3 = Color3.new(1, 1, 1); Instance.new("UICorner", Toggle).CornerRadius = UDim.new(1, 0)
+local Main = Instance.new("Frame", SG); Main.Size = UDim2.new(0, 260, 0, 470); Main.Position = UDim2.new(0.5, -130, 0.5, -235); Main.BackgroundColor3 = Color3.fromRGB(15, 15, 15); Main.Visible = true; Main.Active = true; Main.Draggable = true; Instance.new("UICorner", Main)
+local Title = Instance.new("TextLabel", Main); Title.Size = UDim2.new(1, 0, 0, 34); Title.Text = "TUANANH VIP"; Title.BackgroundTransparency = 1; Title.TextColor3 = Color3.fromRGB(212, 175, 55); Title.Font = Enum.Font.GothamBlack; Title.TextSize = 22
+
+local Tabs, Frames = {}, {}
+local TabNames = {"COMBAT", "HITBOX", "KHÁC"}
+for i = 1, 3 do
+    local b = Instance.new("TextButton", Main); b.Size = UDim2.new(0, 80, 0, 28); b.Position = UDim2.new(0, (i - 1) * 85 + 5, 0, 35); b.Text = TabNames[i]; b.BackgroundColor3 = Color3.fromRGB(120, 0, 0); b.TextColor3 = Color3.fromRGB(255, 230, 230); b.Font = Enum.Font.GothamBlack; b.TextSize = 14; Instance.new("UICorner", b); Tabs[i] = b
+    local f = Instance.new("Frame", Main); f.Size = UDim2.new(1, -10, 1, -70); f.Position = UDim2.new(0, 5, 0, 65); f.Visible = (i == 1); f.BackgroundTransparency = 1; Frames[i] = f
+end
+
+local function Btn(p, t, y, w, c) local b = Instance.new("TextButton", p); b.Size = UDim2.new(0, w or 230, 0, 28); b.Position = UDim2.new(0, 5, 0, y); b.Text = t; b.BackgroundColor3 = c; b.TextColor3 = Color3.new(1, 1, 1); b.Font = Enum.Font.GothamBold; b.TextSize = 11; Instance.new("UICorner", b); return b end
+local function Adj(p, y) local l = Instance.new("TextLabel", p); l.Size = UDim2.new(0, 90, 0, 28); l.Position = UDim2.new(0, 70, 0, y); l.BackgroundColor3 = Color3.fromRGB(25, 25, 25); l.TextColor3 = Color3.new(1, 1, 1); Instance.new("UICorner", l); local d = Btn(p, "-", y, 60, Color3.fromRGB(80, 30, 0)); d.Position = UDim2.new(0, 5, 0, y); local u = Btn(p, "+", y, 60, Color3.fromRGB(30, 80, 0)); u.Position = UDim2.new(0, 175, 0, y); return l, d, u end
+
+-- TAB 1: COMBAT
+local inT = Instance.new("TextBox", Frames[1]); inT.Size = UDim2.new(0, 230, 0, 30); inT.Position = UDim2.new(0, 5, 0, 0); inT.Text = "NHẬP TÊN..."; inT.BackgroundColor3 = Color3.fromRGB(30, 30, 30); inT.TextColor3 = Color3.new(1, 1, 1); Instance.new("UICorner", inT)
+local bTele = Btn(Frames[1], "TẤN CÔNG MỤC TIÊU", 35, 230, Color3.fromRGB(100, 0, 0))
+local bMode = Btn(Frames[1], "CHẾ ĐỘ: LOẠN", 68, 230, Color3.fromRGB(0, 0, 150))
+local xl, xd, xu = Adj(Frames[1], 101); local yl, yd, yu = Adj(Frames[1], 134); local zl, zd, zu = Adj(Frames[1], 167)
+local bAtk = Btn(Frames[1], "TUAN IMPACT (VIP)", 200, 230, Color3.fromRGB(100, 60, 0))
+local bAnti = Btn(Frames[1], "TUAN VB VIPPRO: TẮT", 233, 230, Color3.fromRGB(0, 80, 0))
+local bAimLock = Btn(Frames[1], "🎯 AIM LOCK: TẮT", 266, 230, Color3.fromRGB(100, 0, 100))
+local bAimRange = Btn(Frames[1], "TẦM AIM: " .. AIM_RANGE, 299, 230, Color3.fromRGB(80, 0, 80))
+local bAimFov = Btn(Frames[1], "FOV AIM: " .. AIM_FOV, 332, 230, Color3.fromRGB(80, 0, 80))
+
+-- TAB 2: HITBOX
+local bHB = Btn(Frames[2], "TUANANH HITBOX VIP: BẬT", 0, 230, Color3.fromRGB(0, 150, 0)); local hl, hd, hu = Adj(Frames[2], 35)
+local Scroll = Instance.new("ScrollingFrame", Frames[2]); Scroll.Size = UDim2.new(1, 0, 1, -80); Scroll.Position = UDim2.new(0, 0, 0, 70); Scroll.BackgroundColor3 = Color3.fromRGB(25, 25, 30); Scroll.ScrollBarThickness = 4; local Layout = Instance.new("UIListLayout", Scroll)
+
+local function UpdateList() 
+    for _, v in pairs(Scroll:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
+    for _, p in pairs(game.Players:GetPlayers()) do 
+        if p ~= Player then 
+            local b = Instance.new("TextButton", Scroll); b.Size = UDim2.new(1, -10, 0, 28); b.Text = p.DisplayName; b.BackgroundColor3 = IgnoreList[p.Name] and Color3.fromRGB(150, 50, 50) or Color3.fromRGB(40, 40, 45); b.TextColor3 = Color3.new(1, 1, 1); b.Font = Enum.Font.GothamBold; b.TextSize = 11; Instance.new("UICorner", b)
+            b.MouseButton1Click:Connect(function() IgnoreList[p.Name] = not IgnoreList[p.Name]; UpdateList() end) 
+        end 
+    end
+    Scroll.CanvasSize = UDim2.new(0, 0, 0, Layout.AbsoluteContentSize.Y) 
+end
+
+-- TAB 3: KHÁC
+local bWS = Btn(Frames[3], "TỐC ĐỘ", 0, 230, Color3.fromRGB(150, 0, 150)); local wl, wd, wu = Adj(Frames[3], 35); local bNc = Btn(Frames[3], "XUYÊN TƯỜNG", 70, 110, Color3.fromRGB(45, 45, 45)); local bIf = Btn(Frames[3], "NHẢY VÔ HẠN", 70, 110, Color3.fromRGB(0, 100, 0)); bIf.Position = UDim2.new(0, 120, 0, 70); local bFarm = Btn(Frames[3], "TỰ ĐỘNG LAU XE", 110, 230, Color3.fromRGB(200, 0, 0)); local bE = Btn(Frames[3], "TỰ ĐỘNG E", 145, 230, Color3.fromRGB(200, 0, 0))
+
+-- ================== AIM LOCK FUNCTIONS ==================
+local function AimIsProtected(otherPlayer)
+    if AimProtected[otherPlayer.Name] then return true end
+    if AimProtected["__ALL_TEAM__"] then
+        if Player.Team and otherPlayer.Team then return Player.Team == otherPlayer.Team end
+        if Player.TeamColor and otherPlayer.TeamColor then return Player.TeamColor == otherPlayer.TeamColor end
+    end
+    return false
+end
+
+local function AimGetHeadPosition(character)
+    if character:FindFirstChild("Head") then return character.Head.Position end
+    if character:FindFirstChild("HumanoidRootPart") then
+        return character.HumanoidRootPart.Position + Vector3.new(0, 2, 0)
+    end
+    return nil
+end
+
+local function AimIsTargetValid(t)
+    if not t or not t.Character then return false end
+    local humanoid = t.Character:FindFirstChild("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return false end
+    if AimIsProtected(t) then return false end
+    
+    local char = Player.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
+    local targetRoot = t.Character:FindFirstChild("HumanoidRootPart")
+    if not targetRoot then return false end
+    
+    local distance = (targetRoot.Position - char.HumanoidRootPart.Position).Magnitude
+    if distance > AIM_RANGE then return false end
+    
+    return true
+end
+
+local function AimFindBestTarget()
+    local char = Player.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
+    
+    local myPos = char.HumanoidRootPart.Position
+    local cam = workspace.CurrentCamera
+    local camPos = cam.CFrame.Position
+    local camLook = cam.CFrame.LookVector
+    
+    local bestTarget = nil
+    local bestScore = -math.huge
+    
+    for _, plr in ipairs(game.Players:GetPlayers()) do
+        if plr ~= Player and not AimIsProtected(plr) then
+            if plr.Character and plr.Character:FindFirstChild("Humanoid") and plr.Character.Humanoid.Health > 0 then
+                local root = plr.Character:FindFirstChild("HumanoidRootPart")
+                if root then
+                    local targetPos = AimGetHeadPosition(plr.Character)
+                    if not targetPos then continue end
+                    
+                    local distance = (root.Position - myPos).Magnitude
+                    if distance > AIM_RANGE then continue end
+                    
+                    local dir = (targetPos - camPos).Unit
+                    local angle = math.acos(math.clamp(dir:Dot(camLook), -1, 1))
+                    
+                    if angle <= math.rad(AIM_FOV) then
+                        local score = (1000 - distance) - (math.deg(angle) * 5)
+                        if score > bestScore then
+                            bestScore = score
+                            bestTarget = plr
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestTarget
+end
+
+local function AimShouldSwitchTarget()
+    if not AimTarget or not AimTarget.Character then return true end
+    
+    local char = Player.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
+    
+    local targetRoot = AimTarget.Character:FindFirstChild("HumanoidRootPart")
+    if not targetRoot then return true end
+    
+    local myPos = char.HumanoidRootPart.Position
+    local currentDist = (targetRoot.Position - myPos).Magnitude
+    
+    if currentDist > AIM_RANGE then return true end
+    
+    local betterTarget = AimFindBestTarget()
+    if betterTarget and betterTarget ~= AimTarget then
+        local betterRoot = betterTarget.Character:FindFirstChild("HumanoidRootPart")
+        if betterRoot then
+            local newDist = (betterRoot.Position - myPos).Magnitude
+            if newDist < currentDist - 10 then
+                AimTarget = betterTarget
+                AimLastPosition = betterRoot.Position
+                AimSwitchCooldown = tick()
+                return false
+            end
+            if newDist < PRIORITY_DISTANCE_THRESHOLD and newDist < currentDist then
+                AimTarget = betterTarget
+                AimLastPosition = betterRoot.Position
+                AimSwitchCooldown = tick()
+                return false
+            end
+        end
+    end
+    
+    return false
+end
+
+local function AimSwitchToNewTarget()
+    if not IsAimLock then return end
+    if tick() - AimSwitchCooldown < AUTO_SWITCH_DELAY then return end
+    
+    local newTarget = AimFindBestTarget()
+    if newTarget then
+        if not AimTarget or newTarget ~= AimTarget then
+            AimTarget = newTarget
+            if newTarget.Character and newTarget.Character:FindFirstChild("HumanoidRootPart") then
+                AimLastPosition = newTarget.Character.HumanoidRootPart.Position
+            end
+            AimSwitchCooldown = tick()
+        end
+    else
+        AimTarget = nil
+        AimLastPosition = nil
+    end
+end
+
+local function AimOnRenderStep()
+    if not IsAimLock then
+        if AimConnection then AimConnection:Disconnect(); AimConnection = nil end
+        return
+    end
+    
+    if not AimIsTargetValid(AimTarget) then
+        AimSwitchToNewTarget()
+    else
+        if AimShouldSwitchTarget() then AimSwitchToNewTarget() end
+    end
+    
+    if AimTarget and AimTarget.Character then
+        local targetPos = AimGetHeadPosition(AimTarget.Character)
+        if targetPos then
+            workspace.CurrentCamera.CFrame = CFrame.lookAt(workspace.CurrentCamera.CFrame.Position, targetPos)
+        end
+    end
+end
+
+local function StartAimLock()
+    IsAimLock = true
+    AimTarget = AimFindBestTarget()
+    if AimTarget and AimTarget.Character and AimTarget.Character:FindFirstChild("HumanoidRootPart") then
+        AimLastPosition = AimTarget.Character.HumanoidRootPart.Position
+    end
+    AimSwitchCooldown = tick()
+    if AimConnection then AimConnection:Disconnect() end
+    AimConnection = RunService.RenderStepped:Connect(AimOnRenderStep)
+end
+
+local function StopAimLock()
+    IsAimLock = false
+    AimTarget = nil
+    AimLastPosition = nil
+    if AimConnection then
+        AimConnection:Disconnect()
+        AimConnection = nil
+    end
+end
+
+-- CẬP NHẬT TRẠNG THÁI UI
+local function UI() 
+    local modes = {"LOẠN", "LƠ LỬNG", "XOAY TRÒN"}
+    bMode.Text = "CHẾ ĐỘ: " .. modes[BMode]
+    bTele.BackgroundColor3 = IsTelePro and Color3.new(0, 0.8, 0) or Color3.fromRGB(100, 0, 0)
+    bAtk.BackgroundColor3 = IsAutoClick and Color3.fromRGB(173, 216, 230) or Color3.fromRGB(100, 60, 0)
+    bAnti.BackgroundColor3 = IsAntiStun and Color3.fromRGB(144, 238, 144) or Color3.fromRGB(0, 80, 0)
+    bAnti.Text = IsAntiStun and "TUANANH VB VIPPRO: BẬT" or "TUANANH VB VIPPRO: TẮT"
+    bWS.Text = "TỐC ĐỘ " .. (IsSpeedHack and "BẬT" or "TẮT")
+    bWS.BackgroundColor3 = IsSpeedHack and Color3.new(1, 0, 1) or Color3.fromRGB(150, 0, 150)
+    bNc.BackgroundColor3 = IsNoclip and Color3.new(0.6, 0.6, 0.6) or Color3.fromRGB(45, 45, 45)
+    bIf.BackgroundColor3 = IsInfJump and Color3.new(0, 0.8, 0) or Color3.fromRGB(0, 100, 0)
+    bFarm.BackgroundColor3 = AutoFarmActive and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(200, 0, 0)
+    bE.BackgroundColor3 = SpamEActive and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(200, 0, 0)
+    
+    bHB.Text = IsHitboxAll and "TUANANH HITBOX VIP: BẬT" or "TUANANH HITBOX VIP: TẮT"
+    bHB.BackgroundColor3 = IsHitboxAll and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(100, 100, 255)
+    
+    -- AIM LOCK UI
+    bAimLock.Text = IsAimLock and "🎯 AIM LOCK: BẬT" or "🎯 AIM LOCK: TẮT"
+    bAimLock.BackgroundColor3 = IsAimLock and Color3.fromRGB(150, 0, 200) or Color3.fromRGB(100, 0, 100)
+    bAimRange.Text = "TẦM AIM: " .. AIM_RANGE
+    bAimFov.Text = "FOV AIM: " .. AIM_FOV
+    
+    wl.Text = "T/ĐỘ " .. CurrentWS
+    xl.Text = "X " .. OX; yl.Text = "Y " .. OY; zl.Text = "Z " .. OZ
+    hl.Text = "HB " .. HBS 
+end
+
+-- KẾT NỐI SỰ KIỆN NÚT BẤM
+Toggle.MouseButton1Click:Connect(function() Main.Visible = not Main.Visible end)
+bAnti.MouseButton1Click:Connect(function() IsAntiStun = not IsAntiStun; UI() end)
+for i, b in pairs(Tabs) do b.MouseButton1Click:Connect(function() for j, f in pairs(Frames) do f.Visible = (j == i) end end) end
+bTele.MouseButton1Click:Connect(function() IsTelePro = not IsTelePro; UI() end)
+bMode.MouseButton1Click:Connect(function() BMode = (BMode % 3) + 1; UI() end)
+bAtk.MouseButton1Click:Connect(function() IsAutoClick = not IsAutoClick; UI(); if not IsAutoClick and CombatRemote then pcall(function() CombatRemote:FireServer("Block", false); ActionRemote:FireServer("Block", false) end) end end)
+bWS.MouseButton1Click:Connect(function() IsSpeedHack = not IsSpeedHack; UI() end)
+bNc.MouseButton1Click:Connect(function() IsNoclip = not IsNoclip; UI() end)
+bIf.MouseButton1Click:Connect(function() IsInfJump = not IsInfJump; UI() end)
+
+-- AIM LOCK BUTTONS
+bAimLock.MouseButton1Click:Connect(function()
+    if IsAimLock then
+        StopAimLock()
+    else
+        StartAimLock()
+    end
+    UI()
+end)
+
+bAimRange.MouseButton1Click:Connect(function()
+    AIM_RANGE = AIM_RANGE + 10
+    if AIM_RANGE > 200 then AIM_RANGE = 10 end
+    UI()
+end)
+
+bAimFov.MouseButton1Click:Connect(function()
+    AIM_FOV = AIM_FOV + 15
+    if AIM_FOV > 180 then AIM_FOV = 15 end
+    UI()
+end)
+
+bHB.MouseButton1Click:Connect(function() IsHitboxAll = not IsHitboxAll; UI() end)
+hu.MouseButton1Click:Connect(function() HBS = math.min(100, HBS + 2); UI() end)
+hd.MouseButton1Click:Connect(function() HBS = math.max(2, HBS - 2); UI() end)
+
+bFarm.MouseButton1Click:Connect(function() AutoFarmActive = not AutoFarmActive; UI() end)
+bE.MouseButton1Click:Connect(function() SpamEActive = not SpamEActive; UI() end)
+wu.MouseButton1Click:Connect(function() CurrentWS += 10; UI() end)
+wd.MouseButton1Click:Connect(function() CurrentWS = math.max(16, CurrentWS - 10); UI() end)
+xu.MouseButton1Click:Connect(function() OX += 2; UI() end); xd.MouseButton1Click:Connect(function() OX -= 2; UI() end)
+yu.MouseButton1Click:Connect(function() OY += 2; UI() end); yd.MouseButton1Click:Connect(function() OY -= 2; UI() end)
+zu.MouseButton1Click:Connect(function() OZ += 2; UI() end); zd.MouseButton1Click:Connect(function() OZ -= 2; UI() end)
+
+-- ================== LỆNH CHAT AIM LOCK ==================
+Player.Chatted:Connect(function(message)
+    local msg = message:lower()
+    local args = msg:split(" ")
+    
+    if args[1] == ";tuan" and args[2] == "aim" then
+        if IsAimLock then
+            StopAimLock()
+            print("🎯 AIM LOCK ĐÃ TẮT")
+        else
+            StartAimLock()
+            print("🎯 AIM LOCK ĐÃ BẬT")
+        end
+        UI()
+    elseif args[1] == ";tuan" and args[2] == "aimbv" and args[3] then
+        local found = false
+        for _, plr in ipairs(game.Players:GetPlayers()) do
+            if plr.Name:lower():find(args[3]:lower()) or plr.DisplayName:lower():find(args[3]:lower()) then
+                AimProtected[plr.Name] = true
+                print("🛡️ AIM BẢO VỆ: " .. plr.Name)
+                found = true
+                break
+            end
+        end
+        if not found then print("❌ Không tìm thấy người chơi!") end
+    elseif args[1] == ";tuan" and args[2] == "aimunbv" and args[3] then
+        for name, _ in pairs(AimProtected) do
+            if name:lower():find(args[3]:lower()) then
+                AimProtected[name] = nil
+                print("🔓 ĐÃ HỦY AIM BẢO VỆ: " .. name)
+            end
+        end
+    elseif args[1] == ";tuan" and args[2] == "aimbvall" then
+        AimProtected["__ALL_TEAM__"] = true
+        print("🛡️ AIM BẢO VỆ TẤT CẢ ĐỒNG ĐỘI!")
+    elseif args[1] == ";tuan" and args[2] == "aimrange" and args[3] then
+        local r = tonumber(args[3])
+        if r and r > 0 and r <= 500 then
+            AIM_RANGE = r
+            print("📏 TẦM AIM: " .. r .. " studs")
+            UI()
+        end
+    elseif args[1] == ";tuan" and args[2] == "aimfov" and args[3] then
+        local f = tonumber(args[3])
+        if f and f > 0 and f <= 360 then
+            AIM_FOV = f
+            print("👁️ FOV AIM: " .. f .. " độ")
+            UI()
+        end
+    end
+end)
+
+-- VÒNG LẶP XỬ LÝ GAMEPLAY
+UIS.JumpRequest:Connect(function() if IsInfJump and Player.Character and Player.Character:FindFirstChildOfClass("Humanoid") then Player.Character:FindFirstChildOfClass("Humanoid"):ChangeState(Enum.HumanoidStateType.Jumping) end end)
+
+RunService.Stepped:Connect(function() 
+    local c = Player.Character; if not c or not c:FindFirstChild("HumanoidRootPart") or not c:FindFirstChildOfClass("Humanoid") then return end
+    local hrp = c.HumanoidRootPart; local hum = c:FindFirstChildOfClass("Humanoid"); local s = inT.Text:lower(); local t = nil
+    local isStunned = (hum.WalkSpeed == 0 or hum.JumpPower == 0)
+    local recentlySpawned = (tick() - SpawnTime < 3)
+    
+    if IsNoclip or IsTelePro or (tick() < NoclipTimer) then for _, v in pairs(c:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end end
+    if s ~= "" and s ~= "nhập tên..." then for _, p in pairs(game.Players:GetPlayers()) do if p ~= Player and (p.Name:lower():find(s) or p.DisplayName:lower():find(s)) then t = p; break end end end
+    
+    if IsTelePro and t and t.Character and t.Character:FindFirstChild("HumanoidRootPart") and not (isStunned and not recentlySpawned) then 
+        local thrp = t.Character.HumanoidRootPart; local targetPos
+        if BMode == 1 then targetPos = thrp.Position + Vector3.new(math.random(-30,30)+OX, math.random(-15,15)+OY, math.random(-30,30)+OZ)
+        elseif BMode == 2 then targetPos = thrp.Position + Vector3.new(OX, 5 + OY, OZ)
+        else local time = tick() * 6; targetPos = thrp.Position + Vector3.new(math.sin(time)*7 + OX, OY, math.cos(time)*7 + OZ) end
+        
+        local direction = (targetPos - hrp.Position)
+        if direction.Magnitude > 2 then hrp.AssemblyLinearVelocity = direction.Unit * 260 
+        else hrp.AssemblyLinearVelocity = Vector3.zero end
+        hrp.CFrame = CFrame.new(hrp.Position, Vector3.new(thrp.Position.X, hrp.Position.Y, thrp.Position.Z))
+    elseif isStunned and IsTelePro and not recentlySpawned then
+        hrp.AssemblyLinearVelocity = Vector3.new(math.random(-500, 500), 200, math.random(-500, 500))
+    end
+    if AutoFarmActive then local hum = c:FindFirstChildOfClass("Humanoid"); local hunger = c:FindFirstChild("Hunger") if hunger and hum and hunger.Value <= 0 and hum.Health > 0 and not IsForceRespawn then IsForceRespawn = true; hum.Health = 0 end end 
+end)
+
+RunService.Heartbeat:Connect(function(dt) local c = Player.Character; local r = c and c:FindFirstChild("HumanoidRootPart"); local h = c and c:FindFirstChildOfClass("Humanoid") if not r or not h then return end if IsAntiStun and (h.WalkSpeed == 0 or h.JumpPower == 0) and (tick() - SpawnTime > 3) then NoclipTimer = tick() + 0.5; r.AssemblyLinearVelocity = Vector3.new(math.random(-500, 500), 200, math.random(-500, 500)) end if AutoFarmActive then h:ChangeState(Enum.HumanoidStateType.Physics); local dir = TargetPos - r.Position; if dir.Magnitude > 2 then r.AssemblyLinearVelocity = dir.Unit * Speed else r.AssemblyLinearVelocity = Vector3.zero end end end)
+
+RunService.RenderStepped:Connect(function() 
+    for _, p in pairs(game.Players:GetPlayers()) do 
+        if p ~= Player and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then 
+            local hrp = p.Character.HumanoidRootPart; 
+            if IsHitboxAll and not IgnoreList[p.Name] then 
+                hrp.Size = Vector3.new(HBS, HBS, HBS)
+                hrp.Transparency = 0.7
+                hrp.CanCollide = false 
+            else 
+                hrp.Size = Vector3.new(2, 2, 1)
+                hrp.Transparency = 1
+                hrp.CanCollide = true 
+            end 
+        end 
+    end 
+end)
+
+task.spawn(function() while task.wait(0.1) do local h = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid") if h and IsSpeedHack and not (IsAutoClick and h.WalkSpeed == 0) then h.WalkSpeed = CurrentWS end end end)
+task.spawn(function() while true do RunService.Heartbeat:Wait(); if IsAutoClick and CombatRemote then pcall(function() pcall(function() CombatRemote:FireServer("Block", true); ActionRemote:FireServer("Block", true) end); RunService.RenderStepped:Wait(); pcall(function() CombatRemote:FireServer("Block", false); ActionRemote:FireServer("Block", false) end); for i = 1, 4 do CombatRemote:FireServer("M1"); CombatRemote:FireServer("M2") end; CombatRemote:FireServer("Kick"); pcall(function() ActionRemote:FireServer("Kick") end); task.wait(0.02) end) end end end)
+task.spawn(function() while true do if SpamEActive then VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(1); VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game); task.wait(0.1) end; task.wait(0.1) end end)
+
+Player.CharacterAdded:Connect(function() 
+    SpawnTime = tick()
+    IsForceRespawn = false
+    if IsAimLock then
+        task.wait(0.5)
+        StartAimLock()
+    end
+    UI() 
+end)
+
+UI()
+UpdateList()
+game.Players.PlayerAdded:Connect(function() task.wait(1); UpdateList() end)
+game.Players.PlayerRemoving:Connect(function(player) IgnoreList[player.Name] = nil; AimProtected[player.Name] = nil; UpdateList() end)
+
+local vu = game:GetService("VirtualUser")
+game.Players.LocalPlayer.Idled:Connect(function()
+    vu:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+    task.wait(1)
+    vu:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+end)
+
+repeat task.wait() until game:IsLoaded()
+
+print("✅ TUANANH VIP + AIM LOCK ĐÃ SẴN SÀNG!")
+print("🎮 TAB COMBAT → AIM LOCK")
+print("📋 LỆNH CHAT:")
+print("   ;tuan aim - Bật/tắt Aim Lock")
+print("   ;tuan aimbv [tên] - Bảo vệ người chơi")
+print("   ;tuan aimunbv [tên] - Hủy bảo vệ")
+print("   ;tuan aimbvall - Bảo vệ tất cả đồng đội")
+print("   ;tuan aimrange [số] - Chỉnh tầm aim")
+print("   ;tuan aimfov [số] - Chỉnh FOV aim")
