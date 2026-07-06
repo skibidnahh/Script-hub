@@ -2,120 +2,812 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
 -- ====================================================
--- CẤU HÌNH AIMBOT & HITBOX
+-- TẠO TAG NHẬN DIỆN CHO NGƯỜI DÙNG SCRIPT (ĐỂ QUÉT)
 -- ====================================================
-local AIM_RANGE = 250
+local function tagSelf()
+    pcall(function()
+        if LocalPlayer.Character and not LocalPlayer.Character:FindFirstChild("Kaoya_V36_User") then
+            local tag = Instance.new("StringValue", LocalPlayer.Character)
+            tag.Name = "Kaoya_V36_User"
+        end
+    end)
+end
+LocalPlayer.CharacterAdded:Connect(tagSelf)
+tagSelf()
+
+-- ====================================================
+-- TRẠNG THÁI VÀ CẤU HÌNH LOGIC GỐC (STATE VARIABLES)
+-- ====================================================
 local AIM_FOV = 75
-
-local size = 25
-local enabled = false
-local showVisual = false
-local espEnabled = false
-local isMinimized = false
-
-local aimEnabled = false
-local isAimButtonLocked = false
-local aiming = false
-local target = nil
+local aimRange = 250 -- Biến khoảng cách Aim đã được tách ra để tùy chỉnh
+local size, enabled, showVisual, espEnabled = 25, false, false, false
+local aimEnabled, aiming, target = false, false, nil
 local ignoredPlayers = {}
+local aimButtonLocked = false
+local speedValue, speedEnabled = 46, false
 
--- ====================================================
--- CẤU HÌNH ADMIN REMOTE
--- ====================================================
 local Admins = {"meoiuaccphu", "daide_long9ngon"}
-local LoopKill = false
-local IsFrozen = false
-local IsBringLoop = false
-local ActiveAdmin = nil
-local lastKillTime = 0
+local LoopKill, IsFrozen, IsBringLoop, ActiveAdmin, lastKillTime = false, false, false, nil, 0
 
--- ====================================================
--- GIAO DIỆN CHÍNH (ScreenGui)
--- ====================================================
+local aimActionButton = nil
+local mainUIFrame = nil
+local sidebarFrame = nil
+local wStroke, sStroke = nil, nil 
+local openBtn = nil
+local uiMinimized = false
+local activeMatrixRainUI = nil 
+
+local glowEnabled = false
+local gradientEnabled = false
+local borderAnimEnabled = false
+local accentPulseEnabled = false
+local dynamicConnection = nil
+local glowStrokes = {}
+local gradients = {}
+
+-- Khởi tạo ScreenGui
 local sg = Instance.new("ScreenGui")
-sg.Name = "KaoyaHub_MobileHard_V3"
+sg.Name = "KaoyaFramework_V3.6"
+sg.IgnoreGuiInset = true 
+sg.ResetOnSpawn = false
 pcall(function() sg.Parent = game:GetService("CoreGui") end)
 if not sg.Parent then sg.Parent = LocalPlayer:WaitForChild("PlayerGui") end
-sg.ResetOnSpawn = false
 
-----------------------------------------------------
--- NÚT AIM TRÒN DI ĐỘNG
-----------------------------------------------------
-local aimActionButton = Instance.new("TextButton")
-aimActionButton.Size = UDim2.new(0, 70, 0, 70)
-aimActionButton.Position = UDim2.new(0.7, 0, 0.5, 0)
-aimActionButton.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
-aimActionButton.TextColor3 = Color3.fromRGB(200, 200, 200)
-aimActionButton.Text = "AIM"
-aimActionButton.Font = Enum.Font.GothamBold
-aimActionButton.TextSize = 12
-aimActionButton.Visible = false
-aimActionButton.ZIndex = 10
-aimActionButton.Parent = sg
+-- Auto scale
+local uiScale = Instance.new("UIScale", sg)
+uiScale.Name = "AutoScale"
+local function updateScale()
+    local screenSize = Camera.ViewportSize
+    local scaleX = screenSize.X / 1366
+    local scaleY = screenSize.Y / 768
+    local scale = math.min(scaleX, scaleY)
+    uiScale.Scale = math.clamp(scale, 0.85, 1.6)
+end
+updateScale()
+Camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale)
 
-local aimCorner = Instance.new("UICorner", aimActionButton)
-aimCorner.CornerRadius = UDim.new(1, 0)
+-- ====================================================
+-- HỆ THỐNG LƯU / TẢI CẤU HÌNH (SAVE LOAD)
+-- ====================================================
+local CONFIG_FILE = "KaoyaHubConfig.json"
+local DefaultConfig = {
+    size = 25, enabled = false, showVisual = false, espEnabled = false,
+    aimEnabled = false, aimRange = 250, speedEnabled = false, speedValue = 46,
+    currentTheme = "Dark", glowEnabled = false, gradientEnabled = false,
+    borderAnimEnabled = false, accentPulseEnabled = false
+}
 
-local aimBtnStroke = Instance.new("UIStroke", aimActionButton)
-aimBtnStroke.Color = Color3.fromRGB(50, 50, 55)
-aimBtnStroke.Thickness = 1.5
+local function LoadConfig()
+    local success, data = pcall(function()
+        if not readfile or not isfile then return DefaultConfig end
+        if isfile(CONFIG_FILE) then return game:GetService("HttpService"):JSONDecode(readfile(CONFIG_FILE))
+        else return DefaultConfig end
+    end)
+    if success and type(data) == "table" then
+        for k, v in pairs(DefaultConfig) do if data[k] == nil then data[k] = v end end
+        return data
+    end
+    return DefaultConfig
+end
 
-local aimDragging = false
-local aimDragStart = nil
-local aimStartPos = nil
+local function SaveConfig(config)
+    pcall(function() if writefile then writefile(CONFIG_FILE, game:GetService("HttpService"):JSONEncode(config)) end end)
+end
 
-aimActionButton.InputBegan:Connect(function(input)
-    if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and not isAimButtonLocked then
-        aimDragging = true
-        aimDragStart = input.Position
-        aimStartPos = aimActionButton.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                aimDragging = false
+local savedConfig = LoadConfig()
+size, enabled, showVisual, espEnabled = savedConfig.size, savedConfig.enabled, savedConfig.showVisual, savedConfig.espEnabled
+aimEnabled, aimRange, speedEnabled, speedValue = savedConfig.aimEnabled, savedConfig.aimRange, savedConfig.speedEnabled, savedConfig.speedValue
+glowEnabled, gradientEnabled, borderAnimEnabled, accentPulseEnabled = savedConfig.glowEnabled, savedConfig.gradientEnabled, savedConfig.borderAnimEnabled, savedConfig.accentPulseEnabled
+local currentThemeName = savedConfig.currentTheme or "Dark"
+
+local function SaveCurrentState()
+    SaveConfig({
+        size = size, enabled = enabled, showVisual = showVisual, espEnabled = espEnabled,
+        aimEnabled = aimEnabled, aimRange = aimRange, speedEnabled = speedEnabled, speedValue = speedValue,
+        currentTheme = currentThemeName, glowEnabled = glowEnabled, gradientEnabled = gradientEnabled,
+        borderAnimEnabled = borderAnimEnabled, accentPulseEnabled = accentPulseEnabled
+    })
+end
+
+Players.PlayerRemoving:Connect(function(player)
+    if ignoredPlayers[player.Name] ~= nil then
+        ignoredPlayers[player.Name] = nil
+    end
+end)
+
+-- ====================================================
+-- 🎨 THEME ENGINE
+-- ====================================================
+local KaoyaUI = { CurrentTheme = nil, Registry = {}, PulseObjects = {} }
+local Themes = {
+    Dark = { Main = Color3.fromRGB(15, 15, 18), Secondary = Color3.fromRGB(22, 22, 26), Accent = Color3.fromRGB(46, 204, 113), Text = Color3.fromRGB(245, 245, 245), Muted = Color3.fromRGB(140, 140, 145), Font = Enum.Font.GothamMedium, StrokeColor = Color3.fromRGB(46, 204, 113), StrokeThickness = 1.5, Icon = "KH" },
+    Neon = { Main = Color3.fromRGB(5, 5, 10), Secondary = Color3.fromRGB(12, 12, 25), Accent = Color3.fromRGB(0, 255, 255), Text = Color3.fromRGB(255, 255, 255), Muted = Color3.fromRGB(0, 150, 150), Font = Enum.Font.Roboto, StrokeColor = Color3.fromRGB(0, 255, 255), StrokeThickness = 2, Icon = "⚡" },
+    Minimal = { Main = Color3.fromRGB(245, 245, 245), Secondary = Color3.fromRGB(255, 255, 255), Accent = Color3.fromRGB(30, 30, 30), Text = Color3.fromRGB(30, 30, 30), Muted = Color3.fromRGB(150, 150, 150), Font = Enum.Font.SourceSans, StrokeColor = Color3.fromRGB(200, 200, 200), StrokeThickness = 1, Icon = "🔳" },
+    Cyber = { Main = Color3.fromRGB(10, 6, 24), Secondary = Color3.fromRGB(20, 12, 44), Accent = Color3.fromRGB(254, 0, 152), Text = Color3.fromRGB(0, 255, 246), Muted = Color3.fromRGB(120, 50, 180), Font = Enum.Font.Code, StrokeColor = Color3.fromRGB(254, 0, 152), StrokeThickness = 1.5, Icon = "👾" },
+    Matrix = { Main = Color3.fromRGB(0, 5, 0), Secondary = Color3.fromRGB(5, 15, 5), Accent = Color3.fromRGB(0, 255, 65), Text = Color3.fromRGB(200, 255, 200), Muted = Color3.fromRGB(0, 100, 30), Font = Enum.Font.Code, StrokeColor = Color3.fromRGB(0, 255, 65), StrokeThickness = 1.5, Icon = "01" }
+}
+KaoyaUI.CurrentTheme = Themes[currentThemeName] or Themes.Dark
+
+local function cTween(obj, info, property)
+    local t = TweenService:Create(obj, TweenInfo.new(info.Time or 0.25, info.Style or Enum.EasingStyle.Quad, info.Dir or Enum.EasingDirection.Out), property)
+    t:Play()
+    return t
+end
+
+function KaoyaUI:Register(obj, property, themeKey)
+    self.Registry[obj] = self.Registry[obj] or {}
+    self.Registry[obj][property] = themeKey
+    obj[property] = self.CurrentTheme[themeKey]
+    if obj:IsA("TextLabel") or obj:IsA("TextBox") or obj:IsA("TextButton") then obj.Font = self.CurrentTheme.Font end
+    if themeKey == "Accent" or themeKey == "StrokeColor" then table.insert(self.PulseObjects, {obj = obj, property = property, baseKey = themeKey}) end
+end
+
+local function UpdateEffects()
+    for _, s in ipairs(glowStrokes) do s:Destroy() end
+    glowStrokes = {}
+    for _, g in ipairs(gradients) do g:Destroy() end
+    gradients = {}
+
+    if glowEnabled and mainUIFrame and sidebarFrame then
+        local g1 = Instance.new("UIStroke", mainUIFrame)
+        g1.Color = KaoyaUI.CurrentTheme.Accent; g1.Thickness = 3; g1.Transparency = 0.5; g1.Name = "GlowStroke"
+        table.insert(glowStrokes, g1)
+    end
+
+    if gradientEnabled and mainUIFrame and sidebarFrame then
+        local grad1 = Instance.new("UIGradient", mainUIFrame)
+        grad1.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, KaoyaUI.CurrentTheme.Secondary), ColorSequenceKeypoint.new(1, KaoyaUI.CurrentTheme.Main)})
+        table.insert(gradients, grad1)
+    end
+
+    if dynamicConnection then dynamicConnection:Disconnect(); dynamicConnection = nil end
+
+    if (borderAnimEnabled or accentPulseEnabled) and wStroke and sStroke then
+        local startTime = tick()
+        dynamicConnection = RunService.Heartbeat:Connect(function()
+            local dt = tick() - startTime
+            if borderAnimEnabled then
+                local c = Color3.fromHSV((dt * 120) % 1, 0.8, 1)
+                wStroke.Color = c; sStroke.Color = c
+            end
+            if accentPulseEnabled then
+                local factor = (math.sin(dt * 4) + 1) / 2
+                local newColor = KaoyaUI.CurrentTheme.Accent:Lerp(Color3.fromRGB(255,255,255), factor * 0.3)
+                for _, item in ipairs(KaoyaUI.PulseObjects) do pcall(function() item.obj[item.property] = newColor end) end
             end
         end)
     end
-end)
+end
 
-UserInputService.InputChanged:Connect(function(input)
-    if aimDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - aimDragStart
-        aimActionButton.Position = UDim2.new(
-            aimStartPos.X.Scale,
-            aimStartPos.X.Offset + delta.X,
-            aimStartPos.Y.Scale,
-            aimStartPos.Y.Offset + delta.Y
-        )
+function KaoyaUI:ApplyTheme(themeTable, themeName)
+    self.CurrentTheme = themeTable
+    if themeName then currentThemeName = themeName end
+    for obj, props in pairs(self.Registry) do
+        pcall(function()
+            local targets = {}
+            for prop, key in pairs(props) do targets[prop] = themeTable[key] end
+            cTween(obj, {Time = 0.3}, targets)
+            if obj:IsA("TextLabel") or obj:IsA("TextBox") or obj:IsA("TextButton") then obj.Font = themeTable.Font end
+        end)
+    end
+    if openBtn then openBtn.Text = themeTable.Icon end
+    UpdateEffects()
+    SaveCurrentState()
+end
+
+-- ====================================================
+-- 🔔 NOTIFICATIONS
+-- ====================================================
+local notifyContainer = Instance.new("Frame", sg)
+notifyContainer.Size = UDim2.new(0, 240, 1, -40)
+notifyContainer.Position = UDim2.new(1, -250, 0, 20)
+notifyContainer.BackgroundTransparency = 1
+local nLayout = Instance.new("UIListLayout", notifyContainer)
+nLayout.Padding = UDim.new(0, 8)
+nLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+
+function KaoyaUI:Notification(title, text, duration)
+    duration = duration or 3
+    local frame = Instance.new("Frame", notifyContainer)
+    frame.Size = UDim2.new(1, 0, 0, 45)
+    self:Register(frame, "BackgroundColor3", "Secondary")
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+    local stroke = Instance.new("UIStroke", frame)
+    self:Register(stroke, "Color", "Accent")
+    stroke.Thickness = 1
+
+    local tLbl = Instance.new("TextLabel", frame)
+    tLbl.Size = UDim2.new(1, -16, 0, 20)
+    tLbl.Position = UDim2.new(0, 10, 0, 4)
+    tLbl.BackgroundTransparency = 1
+    tLbl.Text = "✔ " .. string.upper(title)
+    self:Register(tLbl, "TextColor3", "Accent")
+    tLbl.TextSize = 11
+    tLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local desc = Instance.new("TextLabel", frame)
+    desc.Size = UDim2.new(1, -16, 0, 18)
+    desc.Position = UDim2.new(0, 10, 0, 20)
+    desc.BackgroundTransparency = 1
+    desc.Text = text
+    self:Register(desc, "TextColor3", "Text")
+    desc.TextSize = 10
+    desc.TextXAlignment = Enum.TextXAlignment.Left
+
+    local pBar = Instance.new("Frame", frame)
+    pBar.Size = UDim2.new(1, 0, 0, 2)
+    pBar.Position = UDim2.new(0, 0, 1, -2)
+    self:Register(pBar, "BackgroundColor3", "Accent")
+    
+    frame.Size = UDim2.new(0, 0, 0, 45)
+    cTween(frame, {Time = 0.3, Style = Enum.EasingStyle.Back}, {Size = UDim2.new(1, 0, 0, 45)})
+    cTween(pBar, {Time = duration, Style = Enum.EasingStyle.Linear}, {Size = UDim2.new(0, 0, 0, 2)})
+
+    task.delay(duration, function()
+        pcall(function()
+            cTween(frame, {Time = 0.25}, {BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0)})
+            cTween(tLbl, {Time = 0.2}, {TextTransparency = 1})
+            cTween(desc, {Time = 0.2}, {TextTransparency = 1})
+            task.wait(0.25)
+            frame:Destroy()
+        end)
+    end)
+end
+
+-- ====================================================
+-- ⚡ MATRIX LOADING SCREEN
+-- ====================================================
+local function CreateMatrixRain(parentFrame, isUI)
+    local rainFrame = Instance.new("Frame", parentFrame)
+    rainFrame.Size = UDim2.new(1, 0, 1, 0)
+    rainFrame.BackgroundTransparency = 1
+    rainFrame.ZIndex = isUI and 1 or 5
+    rainFrame.ClipsDescendants = true
+
+    local columns = {}
+    local charSize = 14
+    local colors = { Color3.fromRGB(0, 255, 65), Color3.fromRGB(0, 180, 40), Color3.fromRGB(0, 100, 20) }
+
+    local width = isUI and 600 or Camera.ViewportSize.X
+    local height = isUI and 450 or Camera.ViewportSize.Y
+    local numColumns = math.ceil(width / (charSize * 0.8))
+    if numColumns == 0 then numColumns = 80 end
+
+    for i = 1, numColumns do
+        local label = Instance.new("TextLabel", rainFrame)
+        label.Size = UDim2.new(0, charSize, 1, 0)
+        label.Position = UDim2.new(0, (i-1) * (charSize * 0.8), 0, 0)
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.Code
+        label.TextSize = charSize
+        label.TextXAlignment = Enum.TextXAlignment.Center
+        label.TextYAlignment = Enum.TextYAlignment.Top
+        label.ZIndex = isUI and 1 or 5
+        label.Text = ""
+
+        columns[i] = { label = label, speed = math.random(100, 250), offset = math.random(-500, 0) }
+    end
+
+    local conn = RunService.Heartbeat:Connect(function(dt)
+        for i, col in ipairs(columns) do
+            col.offset = col.offset + col.speed * dt
+            if col.offset > height then
+                col.offset = -charSize * math.random(2, 8)
+                col.speed = math.random(100, 250)
+            end
+            col.label.Position = UDim2.new(0, col.label.Position.X.Offset, 0, col.offset)
+            local numChars = math.ceil(math.clamp(height - col.offset, 0, height) / charSize)
+            local str = ""
+            for _ = 1, math.min(numChars, 25) do str = str .. (math.random(0, 1) == 0 and "0" or "1") .. "\n" end
+            col.label.Text = str
+            col.label.TextColor3 = colors[math.random(#colors)]
+        end
+    end)
+
+    return function() if conn then conn:Disconnect() end; rainFrame:Destroy() end
+end
+
+function KaoyaUI:InitLoading(callback)
+    local loadFrame = Instance.new("Frame", sg)
+    loadFrame.Size = UDim2.new(1, 0, 1, 0)
+    loadFrame.Position = UDim2.new(0, 0, 0, 0)
+    self:Register(loadFrame, "BackgroundColor3", "Main")
+    loadFrame.ZIndex = 10
+
+    local cleanupRain = CreateMatrixRain(loadFrame, false)
+
+    local center = Instance.new("Frame", loadFrame)
+    center.Size = UDim2.new(0, 300, 0, 120)
+    center.Position = UDim2.new(0.5, -150, 0.5, -60)
+    center.BackgroundTransparency = 1
+    center.ZIndex = 10
+
+    local title = Instance.new("TextLabel", center)
+    title.Size = UDim2.new(1, 0, 0, 35)
+    title.Text = "KAOYA HUB v3.6"
+    self:Register(title, "TextColor3", "Text")
+    title.TextSize = 24
+    title.Font = Enum.Font.GothamBlack
+    title.ZIndex = 10
+    title.BackgroundTransparency = 1
+
+    local sub = Instance.new("TextLabel", center)
+    sub.Size = UDim2.new(1, 0, 0, 20)
+    sub.Position = UDim2.new(0, 0, 0, 38)
+    sub.Text = "// ACCESS GRANTED // MODE: HACKER"
+    self:Register(sub, "TextColor3", "Accent")
+    sub.TextSize = 10
+    sub.Font = Enum.Font.Code
+    sub.ZIndex = 10
+    sub.BackgroundTransparency = 1
+
+    local barBg = Instance.new("Frame", center)
+    barBg.Size = UDim2.new(1, 0, 0, 5)
+    barBg.Position = UDim2.new(0, 0, 0, 85)
+    self:Register(barBg, "BackgroundColor3", "Secondary")
+    barBg.ZIndex = 10
+    Instance.new("UICorner", barBg).CornerRadius = UDim.new(0, 3)
+
+    local barFill = Instance.new("Frame", barBg)
+    barFill.Size = UDim2.new(0, 0, 1, 0)
+    self:Register(barFill, "BackgroundColor3", "Accent")
+    barFill.ZIndex = 10
+    Instance.new("UICorner", barFill).CornerRadius = UDim.new(0, 3)
+
+    cTween(barFill, {Time = 1.8, Style = Enum.EasingStyle.Quad}, {Size = UDim2.new(1, 0, 1, 0)})
+    task.wait(2.0)
+    cTween(loadFrame, {Time = 0.5}, {BackgroundTransparency = 1})
+    cTween(center, {Time = 0.4}, {Size = UDim2.new(0,0,0,0), BackgroundTransparency = 1})
+    task.wait(0.5)
+    cleanupRain()
+    loadFrame:Destroy()
+    callback()
+end
+
+local function AttachDrag(frame, isAimBtn)
+    local dragging, dragStart, startPos
+    frame.InputBegan:Connect(function(input)
+        if isAimBtn and aimButtonLocked then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = input.Position; startPos = frame.Position
+            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            cTween(frame, {Time = 0.1}, {Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)})
+        end
+    end)
+end
+
+local function OpenPlayerListPopup(modeTitle, isScannerMode)
+    local popup = Instance.new("Frame", mainUIFrame)
+    popup.Size = UDim2.new(1, -20, 1, -40)
+    popup.Position = UDim2.new(0, 10, 0, 30)
+    KaoyaUI:Register(popup, "BackgroundColor3", "Secondary")
+    popup.ZIndex = 50
+    Instance.new("UICorner", popup).CornerRadius = UDim.new(0, 8)
+    
+    local stroke = Instance.new("UIStroke", popup)
+    KaoyaUI:Register(stroke, "Color", "Accent")
+    
+    local title = Instance.new("TextLabel", popup)
+    title.Size = UDim2.new(1, -40, 0, 30)
+    title.Position = UDim2.new(0, 10, 0, 0)
+    title.Text = modeTitle
+    KaoyaUI:Register(title, "TextColor3", "Accent")
+    title.Font = KaoyaUI.CurrentTheme.Font
+    title.BackgroundTransparency = 1
+    title.TextSize = 12
+    title.ZIndex = 51
+
+    local closeBtn = Instance.new("TextButton", popup)
+    closeBtn.Size = UDim2.new(0, 30, 0, 30)
+    closeBtn.Position = UDim2.new(1, -30, 0, 0)
+    closeBtn.Text = "✕"
+    closeBtn.TextColor3 = Color3.fromRGB(231, 76, 60)
+    closeBtn.BackgroundTransparency = 1
+    closeBtn.ZIndex = 51
+    closeBtn.MouseButton1Click:Connect(function() popup:Destroy() end)
+
+    local scroll = Instance.new("ScrollingFrame", popup)
+    scroll.Size = UDim2.new(1, -20, 1, -40)
+    scroll.Position = UDim2.new(0, 10, 0, 35)
+    scroll.BackgroundTransparency = 1
+    scroll.ScrollBarThickness = 2
+    scroll.ZIndex = 51
+    local layout = Instance.new("UIListLayout", scroll)
+    layout.Padding = UDim.new(0, 5)
+
+    for _, p in pairs(Players:GetPlayers()) do
+        if p == LocalPlayer then continue end
+        if isScannerMode and not (p.Character and p.Character:FindFirstChild("Kaoya_V36_User")) then continue end
+
+        local btn = Instance.new("TextButton", scroll)
+        btn.Size = UDim2.new(1, 0, 0, 30)
+        KaoyaUI:Register(btn, "BackgroundColor3", "Main")
+        KaoyaUI:Register(btn, "TextColor3", "Text")
+        btn.Font = KaoyaUI.CurrentTheme.Font
+        btn.ZIndex = 52
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+
+        if isScannerMode then
+            btn.Text = p.DisplayName .. " (@" .. p.Name .. ")"
+        else
+            local isIgnored = ignoredPlayers[p.Name]
+            btn.Text = isIgnored and (p.DisplayName .. " ❌ [Normal]") or (p.DisplayName .. " ✅ [Hitbox]")
+            btn.TextColor3 = isIgnored and Color3.fromRGB(231, 76, 60) or Color3.fromRGB(46, 204, 113)
+
+            btn.MouseButton1Click:Connect(function()
+                ignoredPlayers[p.Name] = not ignoredPlayers[p.Name]
+                local nowIgnored = ignoredPlayers[p.Name]
+                btn.Text = nowIgnored and (p.DisplayName .. " ❌ [Normal]") or (p.DisplayName .. " ✅ [Hitbox]")
+                btn.TextColor3 = nowIgnored and Color3.fromRGB(231, 76, 60) or Color3.fromRGB(46, 204, 113)
+                if p.Character then
+                    local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        if nowIgnored then
+                            hrp.Size = Vector3.new(2, 2, 1)
+                            hrp.Transparency = 1
+                            hrp.CanCollide = false
+                        else
+                            hrp.Size = Vector3.new(size, size, size)
+                            hrp.Transparency = showVisual and 0.5 or 1
+                            hrp.CanCollide = false
+                            if showVisual then hrp.Color = KaoyaUI.CurrentTheme.Accent end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end
+
+-- ====================================================
+-- 🪟 WINDOW FRAMEWORK BUILDER 
+-- ====================================================
+function KaoyaUI:CreateWindow(titleText, versionText)
+    local mainFrame = Instance.new("Frame", sg)
+    mainFrame.Size = UDim2.new(0, 600, 0, 450)
+    mainFrame.Position = UDim2.new(0.5, -300, 0.4, -225)
+    self:Register(mainFrame, "BackgroundColor3", "Main")
+    mainFrame.ClipsDescendants = true
+    Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
+    AttachDrag(mainFrame, false)
+    mainUIFrame = mainFrame
+    
+    wStroke = Instance.new("UIStroke", mainFrame)
+    self:Register(wStroke, "Color", "StrokeColor")
+    wStroke.Thickness = 1.5
+
+    local sidebar = Instance.new("Frame", mainFrame)
+    sidebar.Size = UDim2.new(0, 150, 1, 0)
+    self:Register(sidebar, "BackgroundColor3", "Secondary")
+    sidebar.ZIndex = 2
+    sidebarFrame = sidebar
+    
+    sStroke = Instance.new("UIStroke", sidebar)
+    self:Register(sStroke, "Color", "StrokeColor")
+    sStroke.Thickness = 1.5
+
+    local sLayout = Instance.new("UIListLayout", sidebar)
+    sLayout.Padding = UDim.new(0, 4)
+    Instance.new("UIPadding", sidebar).PaddingTop = UDim.new(0, 40)
+    sLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+    local title = Instance.new("TextLabel", mainFrame)
+    title.Size = UDim2.new(0, 110, 0, 35)
+    title.Position = UDim2.new(0, 12, 0, 0)
+    title.Text = titleText .. " <font color='#2ecc71'>" .. versionText .. "</font>"
+    title.RichText = true
+    self:Register(title, "TextColor3", "Text")
+    title.TextSize = 11
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.BackgroundTransparency = 1
+    title.ZIndex = 2
+
+    local container = Instance.new("Frame", mainFrame)
+    container.Size = UDim2.new(1, -162, 1, -15)
+    container.Position = UDim2.new(0, 156, 0, 10)
+    container.BackgroundTransparency = 1
+    container.ZIndex = 2
+
+    local Window = { Tabs = {}, CurrentTab = nil, mainFrame = mainFrame, sidebar = sidebar, wStroke = wStroke, sStroke = sStroke }
+
+    function Window:CreateTab(tabName)
+        local Tab = { Active = false }
+        local tabBtn = Instance.new("TextButton", sidebar)
+        tabBtn.Size = UDim2.new(1, -12, 0, 26)
+        tabBtn.BackgroundTransparency = 1
+        tabBtn.Text = tabName
+        KaoyaUI:Register(tabBtn, "TextColor3", "Muted")
+        tabBtn.TextSize = 10
+        tabBtn.ZIndex = 2
+        Instance.new("UICorner", tabBtn).CornerRadius = UDim.new(0, 5)
+
+        local page = Instance.new("ScrollingFrame", container)
+        page.Size = UDim2.new(1, 0, 1, 0)
+        page.BackgroundTransparency = 1
+        page.Visible = false
+        page.ScrollBarThickness = 1
+        page.ZIndex = 2
+        
+        local pLayout = Instance.new("UIListLayout", page)
+        pLayout.Padding = UDim.new(0, 6)
+        pLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        pLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+            page.CanvasSize = UDim2.fromOffset(0, pLayout.AbsoluteContentSize.Y + 10)
+        end)
+
+        function Tab:Select()
+            for _, t in pairs(Window.Tabs) do t.page.Visible = false; t.btn.BackgroundTransparency = 1; KaoyaUI:Register(t.btn, "TextColor3", "Muted") end
+            page.Visible = true; KaoyaUI:Register(tabBtn, "TextColor3", "Accent"); tabBtn.BackgroundTransparency = 0.08
+        end
+        tabBtn.MouseButton1Click:Connect(function() Tab:Select() end)
+        Tab.page = page; Tab.btn = tabBtn
+        table.insert(Window.Tabs, Tab)
+        if #Window.Tabs == 1 then Tab:Select() end
+        
+        function Tab:CreateToggle(text, default, callback)
+            local tFrame = Instance.new("Frame", page)
+            tFrame.Size = UDim2.new(1, -6, 0, 44)
+            KaoyaUI:Register(tFrame, "BackgroundColor3", "Secondary")
+            tFrame.ZIndex = 2
+            Instance.new("UICorner", tFrame).CornerRadius = UDim.new(0, 6)
+
+            local lbl = Instance.new("TextLabel", tFrame)
+            lbl.Size = UDim2.new(1, -60, 1, 0)
+            lbl.Position = UDim2.new(0, 10, 0, 0)
+            lbl.BackgroundTransparency = 1
+            lbl.Text = text
+            KaoyaUI:Register(lbl, "TextColor3", "Text")
+            lbl.TextSize = 14
+            lbl.TextXAlignment = Enum.TextXAlignment.Left
+            lbl.ZIndex = 2
+
+            local switch = Instance.new("TextButton", tFrame)
+            switch.Size = UDim2.new(0, 42, 0, 22)
+            switch.Position = UDim2.new(1, -52, 0, 11)
+            switch.Text = ""
+            KaoyaUI:Register(switch, "BackgroundColor3", default and "Accent" or "Main")
+            switch.ZIndex = 2
+            Instance.new("UICorner", switch).CornerRadius = UDim.new(1, 0)
+
+            local ball = Instance.new("Frame", switch)
+            ball.Size = UDim2.new(0, 18, 0, 18)
+            ball.Position = default and UDim2.new(1, -20, 0, 2) or UDim2.new(0, 2, 0, 2)
+            ball.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+            ball.ZIndex = 2
+            Instance.new("UICorner", ball).CornerRadius = UDim.new(1, 0)
+
+            local state = default
+            
+            local function updateToggleVisual(newState)
+                state = newState
+                cTween(switch, {Time = 0.2}, {BackgroundColor3 = state and KaoyaUI.CurrentTheme.Accent or KaoyaUI.CurrentTheme.Main})
+                cTween(ball, {Time = 0.2}, {Position = state and UDim2.new(1, -20, 0, 2) or UDim2.new(0, 2, 0, 2)})
+            end
+
+            switch.MouseButton1Click:Connect(function()
+                state = not state
+                updateToggleVisual(state)
+                callback(state)
+            end)
+
+            if text == "Enable Custom Hitbox" then
+                switch.Name = "HitboxToggleObject"
+                _G.UpdateHitboxToggleUI = updateToggleVisual
+            end
+        end
+
+        function Tab:CreateSlider(text, min, max, default, callback)
+            local sFrame = Instance.new("Frame", page)
+            sFrame.Size = UDim2.new(1, -6, 0, 48)
+            KaoyaUI:Register(sFrame, "BackgroundColor3", "Secondary")
+            sFrame.ZIndex = 2
+            Instance.new("UICorner", sFrame).CornerRadius = UDim.new(0, 6)
+
+            local lbl = Instance.new("TextLabel", sFrame)
+            lbl.Size = UDim2.new(1, -60, 0, 22)
+            lbl.Position = UDim2.new(0, 10, 0, 2)
+            lbl.BackgroundTransparency = 1
+            lbl.Text = text
+            KaoyaUI:Register(lbl, "TextColor3", "Text")
+            lbl.TextSize = 14
+            lbl.TextXAlignment = Enum.TextXAlignment.Left
+            lbl.ZIndex = 2
+
+            local valBox = Instance.new("TextBox", sFrame)
+            valBox.Size = UDim2.new(0, 42, 0, 20)
+            valBox.Position = UDim2.new(1, -52, 0, 4)
+            KaoyaUI:Register(valBox, "BackgroundColor3", "Main")
+            valBox.Text = tostring(default)
+            KaoyaUI:Register(valBox, "TextColor3", "Accent")
+            valBox.TextSize = 12
+            valBox.ZIndex = 2
+            Instance.new("UICorner", valBox).CornerRadius = UDim.new(0, 4)
+
+            local bar = Instance.new("TextButton", sFrame)
+            bar.Size = UDim2.new(1, -20, 0, 6)
+            bar.Position = UDim2.new(0, 10, 0, 34)
+            bar.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+            bar.Text = ""
+            bar.ZIndex = 2
+            Instance.new("UICorner", bar)
+
+            local fill = Instance.new("Frame", bar)
+            fill.Size = UDim2.new((default - min)/(max - min), 0, 1, 0)
+            KaoyaUI:Register(fill, "BackgroundColor3", "Accent")
+            fill.ZIndex = 2
+            Instance.new("UICorner", fill)
+
+            local function update(input)
+                local pct = math.clamp((input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+                fill.Size = UDim2.new(pct, 0, 1, 0)
+                local val = math.floor(min + (max - min) * pct)
+                valBox.Text = tostring(val)
+                callback(val)
+            end
+
+            local active = false
+            bar.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then active = true; update(input) end
+            end)
+            UserInputService.InputChanged:Connect(function(input)
+                if active and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then update(input) end
+            end)
+            UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then active = false end
+            end)
+            
+            valBox.FocusLost:Connect(function()
+                local n = tonumber(valBox.Text) or default
+                n = math.clamp(n, min, max)
+                valBox.Text = tostring(n)
+                fill.Size = UDim2.new((n - min)/(max - min), 0, 1, 0)
+                callback(n)
+            end)
+        end
+
+        function Tab:CreateTextBox(placeholder, callback)
+            local boxFrame = Instance.new("Frame", page)
+            boxFrame.Size = UDim2.new(1, -6, 0, 40)
+            KaoyaUI:Register(boxFrame, "BackgroundColor3", "Secondary")
+            boxFrame.ZIndex = 2
+            Instance.new("UICorner", boxFrame).CornerRadius = UDim.new(0, 6)
+
+            local box = Instance.new("TextBox", boxFrame)
+            box.Size = UDim2.new(1, -16, 1, -8)
+            box.Position = UDim2.new(0, 8, 0, 4)
+            box.BackgroundTransparency = 1
+            box.PlaceholderText = placeholder
+            box.Text = ""
+            box.PlaceholderColor3 = Color3.fromRGB(110, 110, 115)
+            KaoyaUI:Register(box, "TextColor3", "Text")
+            box.TextSize = 14
+            box.ZIndex = 2
+            box.FocusLost:Connect(function() callback(box.Text, box) end)
+        end
+
+        function Tab:CreateButton(text, callback)
+            local btnFrame = Instance.new("Frame", page)
+            btnFrame.Size = UDim2.new(1, -6, 0, 44)
+            KaoyaUI:Register(btnFrame, "BackgroundColor3", "Secondary")
+            btnFrame.ZIndex = 2
+            Instance.new("UICorner", btnFrame).CornerRadius = UDim.new(0, 6)
+
+            local btn = Instance.new("TextButton", btnFrame)
+            btn.Size = UDim2.new(1, -16, 1, -8)
+            btn.Position = UDim2.new(0, 8, 0, 4)
+            btn.BackgroundTransparency = 1
+            btn.Text = text
+            KaoyaUI:Register(btn, "TextColor3", "Accent")
+            btn.TextSize = 14
+            btn.Font = Enum.Font.GothamBold
+            btn.ZIndex = 2
+
+            btn.MouseButton1Click:Connect(callback)
+            return btnFrame 
+        end
+
+        return Tab
+    end
+    return Window
+end
+
+-- ====================================================
+-- 📊 MINI MONITOR WIDGET (FPS & PING)
+-- ====================================================
+local statsFrame = Instance.new("Frame", sg)
+statsFrame.Size = UDim2.new(0, 160, 0, 55) 
+statsFrame.Position = UDim2.new(0.5, -80, 0.015, 0)
+KaoyaUI:Register(statsFrame, "BackgroundColor3", "Main")
+Instance.new("UICorner", statsFrame).CornerRadius = UDim.new(0, 6)
+AttachDrag(statsFrame, false)
+
+local function MakeLine(pos)
+    local l = Instance.new("TextLabel", statsFrame)
+    l.Size = UDim2.new(1, -12, 0, 16)
+    l.Position = pos
+    l.BackgroundTransparency = 1
+    KaoyaUI:Register(l, "TextColor3", "Text")
+    l.TextSize = 11 
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    return l
+end
+
+local fLine = MakeLine(UDim2.new(0, 12, 0, 8)) 
+local pLine = MakeLine(UDim2.new(0, 12, 0, 30)) 
+
+local frames, lastUp = 0, os.clock()
+RunService.RenderStepped:Connect(function()
+    frames = frames + 1
+    if os.clock() - lastUp >= 0.5 then
+        fLine.Text = "📊 FPS: " .. math.floor(frames / (os.clock() - lastUp))
+        pLine.Text = "⚡ PNG: " .. (LocalPlayer and math.floor(LocalPlayer:GetNetworkPing() * 1000) or 0) .. " ms"
+        frames = 0; lastUp = os.clock()
     end
 end)
 
-----------------------------------------------------
--- THUẬT TOÁN AIMBOT
-----------------------------------------------------
+-- openBtn
+openBtn = Instance.new("TextButton", sg) 
+openBtn.Size = UDim2.new(0, 60, 0, 60) 
+openBtn.Position = UDim2.new(0.02, 0, 0.1, 0)
+KaoyaUI:Register(openBtn, "BackgroundColor3", "Secondary")
+openBtn.Text = KaoyaUI.CurrentTheme.Icon
+KaoyaUI:Register(openBtn, "TextColor3", "Accent")
+openBtn.TextSize = 18 
+Instance.new("UICorner", openBtn).CornerRadius = UDim.new(1, 0) 
+AttachDrag(openBtn, false)
+
+local oStroke = Instance.new("UIStroke", openBtn)
+KaoyaUI:Register(oStroke, "Color", "Accent")
+oStroke.Thickness = 1.5
+
+openBtn.MouseButton1Click:Connect(function()
+    if mainUIFrame then
+        if mainUIFrame.Visible then
+            cTween(mainUIFrame, {Time = 0.25, Style = Enum.EasingStyle.Quad}, {Size = UDim2.new(0, 0, 0, 0)})
+            task.wait(0.25)
+            mainUIFrame.Visible = false
+        else
+            mainUIFrame.Visible = true
+            cTween(mainUIFrame, {Time = 0.3, Style = Enum.EasingStyle.Back}, {Size = UDim2.new(0, 600, 0, 450)})
+        end
+    end
+end)
+
+-- ====================================================
+-- 🎯 AIMBOT & VÒNG LẶP CHỨC NĂNG
+-- ====================================================
 local function findTarget()
     local char = LocalPlayer.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
     local rootPos = char.HumanoidRootPart.Position
     local camLook = Camera.CFrame.LookVector
-    local bestTarget = nil
-    local bestDist = math.huge
+    local bestTarget, bestDist = nil, math.huge
+    
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer and not ignoredPlayers[plr] and plr.Character then
+        if plr ~= LocalPlayer and plr.Character then
             local root = plr.Character:FindFirstChild("HumanoidRootPart")
             local hum = plr.Character:FindFirstChild("Humanoid")
             if root and hum and hum.Health > 0 then
                 local dist = (root.Position - rootPos).Magnitude
-                if dist > AIM_RANGE then continue end
+                -- Bỏ qua nếu mục tiêu xa hơn giới hạn khoảng cách bạn đã chọn
+                if dist > aimRange then continue end
+                
                 local dir = (root.Position - Camera.CFrame.Position).Unit
                 local angle = math.deg(math.acos(math.clamp(dir:Dot(camLook), -1, 1)))
-                if angle <= AIM_FOV and dist < bestDist then
-                    bestDist = dist
-                    bestTarget = {player = plr, body = root}
+                if angle <= AIM_FOV and dist < bestDist then 
+                    bestDist = dist 
+                    bestTarget = {player = plr, body = root} 
                 end
             end
         end
@@ -126,505 +818,135 @@ end
 local function UpdateAimLock()
     if not aimEnabled or not aiming then
         pcall(function() RunService:UnbindFromRenderStep("KaoyaHub_MobileLock") end)
-        target = nil
-        aiming = false
-        aimActionButton.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
-        aimBtnStroke.Color = Color3.fromRGB(50, 50, 55)
-        aimActionButton.TextColor3 = Color3.fromRGB(200, 200, 200)
-        aimActionButton.Text = "AIM"
+        target = nil; aiming = false
+        if aimActionButton then aimActionButton.Text = "AIM" end
         return
     end
+    
     local char = LocalPlayer.Character
     local localRoot = char and char:FindFirstChild("HumanoidRootPart")
-    local validTarget = target and target.body and target.body.Parent and target.player.Character and not ignoredPlayers[target.player]
+    local validTarget = target and target.body and target.body.Parent and target.player.Character
+    
     if validTarget then
         local hum = target.player.Character:FindFirstChild("Humanoid")
         if not hum or hum.Health <= 0 then validTarget = false end
-        if localRoot and validTarget then
-            local dist = (target.body.Position - localRoot.Position).Magnitude
-            if dist > AIM_RANGE then validTarget = false end
+        -- Nếu mục tiêu chạy ra khỏi giới hạn khoảng cách aimRange, lập tức mất khóa (Lock)
+        if localRoot and validTarget then 
+            if (target.body.Position - localRoot.Position).Magnitude > aimRange then 
+                validTarget = false 
+            end 
         end
     end
+    
     if not validTarget then
         target = findTarget()
-        if not target then
-            aimActionButton.BackgroundColor3 = Color3.fromRGB(22, 22, 25)
-            aimBtnStroke.Color = Color3.fromRGB(241, 196, 15)
-            aimActionButton.TextColor3 = Color3.fromRGB(241, 196, 15)
-            aimActionButton.Text = "SCANNING"
-            return
-        end
+        if not target then if aimActionButton then aimActionButton.Text = "SCANNING" end; return end
     end
-    if target and target.body then
-        aimActionButton.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
-        aimBtnStroke.Color = Color3.fromRGB(39, 174, 96)
-        aimActionButton.TextColor3 = Color3.fromRGB(39, 174, 96)
+    
+    if target and target.body and aimActionButton then
         aimActionButton.Text = "LOCK\n" .. string.upper(string.sub(target.player.DisplayName, 1, 5))
         local targetVelocity = target.body.AssemblyLinearVelocity * 0.03
-        local finalTargetPos = target.body.Position + targetVelocity
-        Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, finalTargetPos)
+        Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, target.body.Position + targetVelocity)
     end
 end
+
+-- NÚT AIM (to hơn)
+aimActionButton = Instance.new("TextButton", sg)
+aimActionButton.Size = UDim2.new(0, 80, 0, 80)
+aimActionButton.Position = UDim2.new(0.75, 0, 0.35, 0)
+aimActionButton.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+aimActionButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+aimActionButton.Text = "AIM"
+aimActionButton.TextSize = 14
+aimActionButton.Visible = aimEnabled
+Instance.new("UICorner", aimActionButton).CornerRadius = UDim.new(1, 0)
+AttachDrag(aimActionButton, true)
+
+local abStroke = Instance.new("UIStroke", aimActionButton)
+abStroke.Color = Color3.fromRGB(60, 60, 65)
+abStroke.Thickness = 1.5
 
 aimActionButton.MouseButton1Click:Connect(function()
     if not aimEnabled then return end
     aiming = not aiming
     if aiming then
         RunService:BindToRenderStep("KaoyaHub_MobileLock", Enum.RenderPriority.Camera.Value + 1, UpdateAimLock)
+        cTween(abStroke, {Time = 0.2}, {Color = Color3.fromRGB(46, 204, 113)})
     else
         pcall(function() RunService:UnbindFromRenderStep("KaoyaHub_MobileLock") end)
         target = nil
-        aimActionButton.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
-        aimBtnStroke.Color = Color3.fromRGB(50, 50, 55)
-        aimActionButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+        cTween(abStroke, {Time = 0.2}, {Color = Color3.fromRGB(60, 60, 65)})
         aimActionButton.Text = "AIM"
     end
 end)
 
-----------------------------------------------------
--- MENU CHÍNH
-----------------------------------------------------
-local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 310, 0, 220)
-mainFrame.Position = UDim2.new(0.5, -155, 0.4, -110)
-mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
-mainFrame.BorderSizePixel = 0
-mainFrame.Active = true
-mainFrame.Parent = sg
-
-Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 4)
-local mainStroke = Instance.new("UIStroke", mainFrame)
-mainStroke.Color = Color3.fromRGB(50, 50, 55)
-mainStroke.Thickness = 1
-
-local topBar = Instance.new("Frame")
-topBar.Size = UDim2.new(1, 0, 0, 35)
-topBar.BackgroundColor3 = Color3.fromRGB(22, 22, 25)
-topBar.BorderSizePixel = 0
-topBar.Parent = mainFrame
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(0, 120, 1, 0)
-title.Position = UDim2.new(0, 12, 0, 0)
-title.BackgroundTransparency = 1
-title.Text = "KAOYA HUB MOBILE"
-title.TextColor3 = Color3.fromRGB(255, 255, 255)
-title.Font = Enum.Font.GothamBold
-title.TextSize = 13
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Parent = topBar
-
-local fpsLabel = Instance.new("TextLabel")
-fpsLabel.Size = UDim2.new(0, 60, 1, 0)
-fpsLabel.Position = UDim2.new(1, -170, 0, 0)
-fpsLabel.BackgroundTransparency = 1
-fpsLabel.Text = "FPS: --"
-fpsLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
-fpsLabel.Font = Enum.Font.GothamMedium
-fpsLabel.TextSize = 12
-fpsLabel.TextXAlignment = Enum.TextXAlignment.Right
-fpsLabel.Parent = topBar
-
-local pingLabel = Instance.new("TextLabel")
-pingLabel.Size = UDim2.new(0, 70, 1, 0)
-pingLabel.Position = UDim2.new(1, -105, 0, 0)
-pingLabel.BackgroundTransparency = 1
-pingLabel.Text = "--- ms"
-pingLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
-pingLabel.Font = Enum.Font.GothamMedium
-pingLabel.TextSize = 12
-pingLabel.TextXAlignment = Enum.TextXAlignment.Right
-pingLabel.Parent = topBar
-
-local toggleBtn = Instance.new("TextButton")
-toggleBtn.Size = UDim2.new(0, 35, 1, 0)
-toggleBtn.Position = UDim2.new(1, -35, 0, 0)
-toggleBtn.BackgroundTransparency = 1
-toggleBtn.Text = "—"
-toggleBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-toggleBtn.Font = Enum.Font.GothamBold
-toggleBtn.TextSize = 12
-toggleBtn.Parent = topBar
-
-local contentFrame = Instance.new("ScrollingFrame")
-contentFrame.Size = UDim2.new(1, 0, 1, -35)
-contentFrame.Position = UDim2.new(0, 0, 0, 35)
-contentFrame.BackgroundTransparency = 1
-contentFrame.BorderSizePixel = 0
-contentFrame.CanvasSize = UDim2.new(0, 0, 0, 220)
-contentFrame.ScrollBarThickness = 3
-contentFrame.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 85)
-contentFrame.Parent = mainFrame
-
-local tb = Instance.new("TextBox")
-tb.Size = UDim2.new(0, 70, 0, 35)
-tb.Position = UDim2.new(0, 15, 0, 15)
-tb.Text = "25"
-tb.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-tb.TextColor3 = Color3.fromRGB(255, 255, 255)
-tb.Font = Enum.Font.GothamBold
-tb.TextSize = 14
-tb.BorderSizePixel = 0
-tb.Parent = contentFrame
-Instance.new("UICorner", tb).CornerRadius = UDim.new(0, 4)
-
-local enableBtn = Instance.new("TextButton")
-enableBtn.Size = UDim2.new(0, 180, 0, 35)
-enableBtn.Position = UDim2.new(0, 100, 0, 15)
-enableBtn.Text = "HITBOX: OFF"
-enableBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
-enableBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-enableBtn.Font = Enum.Font.GothamBold
-enableBtn.TextSize = 13
-enableBtn.BorderSizePixel = 0
-enableBtn.Parent = contentFrame
-Instance.new("UICorner", enableBtn).CornerRadius = UDim.new(0, 4)
-
-local showBtn = Instance.new("TextButton")
-showBtn.Size = UDim2.new(0, 220, 0, 35)
-showBtn.Position = UDim2.new(0, 15, 0, 65)
-showBtn.Text = "SHOW VISUAL: OFF"
-showBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-showBtn.TextColor3 = Color3.fromRGB(150, 150, 150)
-showBtn.Font = Enum.Font.GothamBold
-showBtn.TextSize = 12
-showBtn.BorderSizePixel = 0
-showBtn.Parent = contentFrame
-Instance.new("UICorner", showBtn).CornerRadius = UDim.new(0, 4)
-
-local wlToggleBtn = Instance.new("TextButton")
-wlToggleBtn.Size = UDim2.new(0, 35, 0, 35)
-wlToggleBtn.Position = UDim2.new(0, 245, 0, 65)
-wlToggleBtn.Text = "📋"
-wlToggleBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-wlToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-wlToggleBtn.Font = Enum.Font.GothamBold
-wlToggleBtn.TextSize = 16
-wlToggleBtn.BorderSizePixel = 0
-wlToggleBtn.Parent = contentFrame
-Instance.new("UICorner", wlToggleBtn).CornerRadius = UDim.new(0, 4)
-
-local espBtn = Instance.new("TextButton")
-espBtn.Size = UDim2.new(0, 265, 0, 35)
-espBtn.Position = UDim2.new(0, 15, 0, 115)
-espBtn.Text = "ESP HIGHLIGHT: OFF"
-espBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-espBtn.TextColor3 = Color3.fromRGB(150, 150, 150)
-espBtn.Font = Enum.Font.GothamBold
-espBtn.TextSize = 12
-espBtn.BorderSizePixel = 0
-espBtn.Parent = contentFrame
-Instance.new("UICorner", espBtn).CornerRadius = UDim.new(0, 4)
-
-local aimBtn = Instance.new("TextButton")
-aimBtn.Size = UDim2.new(0, 220, 0, 35)
-aimBtn.Position = UDim2.new(0, 15, 0, 165)
-aimBtn.Text = "AIMBOT BUTTON: OFF"
-aimBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
-aimBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-aimBtn.Font = Enum.Font.GothamBold
-aimBtn.TextSize = 12
-aimBtn.BorderSizePixel = 0
-aimBtn.Parent = contentFrame
-Instance.new("UICorner", aimBtn).CornerRadius = UDim.new(0, 4)
-
-local lockBtn = Instance.new("TextButton")
-lockBtn.Size = UDim2.new(0, 35, 0, 35)
-lockBtn.Position = UDim2.new(0, 245, 0, 165)
-lockBtn.Text = "🔓"
-lockBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-lockBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-lockBtn.Font = Enum.Font.GothamBold
-lockBtn.TextSize = 16
-lockBtn.BorderSizePixel = 0
-lockBtn.Parent = contentFrame
-Instance.new("UICorner", lockBtn).CornerRadius = UDim.new(0, 4)
-
-----------------------------------------------------
--- MENU WHITELIST
-----------------------------------------------------
-local wlFrame = Instance.new("Frame")
-wlFrame.Size = UDim2.new(0, 200, 0, 220)
-wlFrame.Position = UDim2.new(1, 10, 0, 0)
-wlFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
-wlFrame.BorderSizePixel = 0
-wlFrame.Visible = false
-wlFrame.Parent = mainFrame
-Instance.new("UICorner", wlFrame).CornerRadius = UDim.new(0, 4)
-Instance.new("UIStroke", wlFrame).Color = Color3.fromRGB(50, 50, 55)
-
-local wlTopBar = Instance.new("Frame")
-wlTopBar.Size = UDim2.new(1, 0, 0, 35)
-wlTopBar.BackgroundColor3 = Color3.fromRGB(22, 22, 25)
-wlTopBar.BorderSizePixel = 0
-wlTopBar.Parent = wlFrame
-Instance.new("UICorner", wlTopBar).CornerRadius = UDim.new(0, 4)
-
-local wlTitle = Instance.new("TextLabel")
-wlTitle.Size = UDim2.new(1, -10, 1, 0)
-wlTitle.Position = UDim2.new(0, 10, 0, 0)
-wlTitle.BackgroundTransparency = 1
-wlTitle.Text = "PLAYER LIST"
-wlTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
-wlTitle.Font = Enum.Font.GothamBold
-wlTitle.TextSize = 12
-wlTitle.TextXAlignment = Enum.TextXAlignment.Left
-wlTitle.Parent = wlTopBar
-
-local wlScroll = Instance.new("ScrollingFrame")
-wlScroll.Size = UDim2.new(1, 0, 1, -40)
-wlScroll.Position = UDim2.new(0, 0, 0, 40)
-wlScroll.BackgroundTransparency = 1
-wlScroll.BorderSizePixel = 0
-wlScroll.ScrollBarThickness = 2
-wlScroll.Parent = wlFrame
-
-local function refreshWhitelist()
-    for _, child in pairs(wlScroll:GetChildren()) do
-        if child:IsA("TextButton") then child:Destroy() end
+local function UpdateHitboxVisualState(state)
+    if _G.UpdateHitboxToggleUI then
+        _G.UpdateHitboxToggleUI(state)
     end
-    local yPos = 0
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then
-            local pBtn = Instance.new("TextButton")
-            pBtn.Size = UDim2.new(1, -10, 0, 30)
-            pBtn.Position = UDim2.new(0, 5, 0, yPos)
-            pBtn.Font = Enum.Font.GothamSemibold
-            pBtn.TextSize = 11
-            Instance.new("UICorner", pBtn).CornerRadius = UDim.new(0, 4)
-            pBtn.Parent = wlScroll
-            if ignoredPlayers[plr] then
-                pBtn.BackgroundColor3 = Color3.fromRGB(192, 57, 43)
-                pBtn.Text = plr.DisplayName .. " [OFF]"
-            else
-                pBtn.BackgroundColor3 = Color3.fromRGB(39, 174, 96)
-                pBtn.Text = plr.DisplayName .. " [ON]"
-            end
-            pBtn.MouseButton1Click:Connect(function()
-                ignoredPlayers[plr] = not ignoredPlayers[plr]
-                if ignoredPlayers[plr] then
-                    pBtn.BackgroundColor3 = Color3.fromRGB(192, 57, 43)
-                    pBtn.Text = plr.DisplayName .. " [OFF]"
-                else
-                    pBtn.BackgroundColor3 = Color3.fromRGB(39, 174, 96)
-                    pBtn.Text = plr.DisplayName .. " [ON]"
+end
+
+-- VÒNG LẶP HITBOX VÀ ESP
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        if enabled then
+            for _, p in pairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer and p.Character then
+                    pcall(function()
+                        local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            if ignoredPlayers[p.Name] then
+                                hrp.Size = Vector3.new(2, 2, 1)
+                                hrp.Transparency = 1
+                                hrp.CanCollide = false
+                            else
+                                hrp.Size = Vector3.new(size, size, size)
+                                hrp.CanCollide = false
+                                hrp.Transparency = showVisual and 0.5 or 1
+                                if showVisual then hrp.Color = KaoyaUI.CurrentTheme.Accent end
+                            end
+                        end
+                    end)
                 end
-            end)
-            yPos = yPos + 35
-        end
-    end
-    wlScroll.CanvasSize = UDim2.new(0, 0, 0, yPos)
-end
-
-wlToggleBtn.MouseButton1Click:Connect(function()
-    wlFrame.Visible = not wlFrame.Visible
-    if wlFrame.Visible then refreshWhitelist() end
-end)
-
-----------------------------------------------------
--- LOGIC CÁC NÚT CHỨC NĂNG
-----------------------------------------------------
-local function resetAll()
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer and plr.Character then
-            local root = plr.Character:FindFirstChild("HumanoidRootPart")
-            if root then
-                root.Size = Vector3.new(2, 2, 1)
-                root.Transparency = 1
-                root.CanCollide = false
             end
         end
-    end
-end
-
-tb.FocusLost:Connect(function()
-    local num = tonumber(tb.Text)
-    if num then size = math.clamp(num, 2, 100) end
-    tb.Text = tostring(size)
-end)
-
-enableBtn.MouseButton1Click:Connect(function()
-    enabled = not enabled
-    if enabled then
-        enableBtn.Text = "HITBOX: ON"
-        enableBtn.BackgroundColor3 = Color3.fromRGB(39, 174, 96)
-        enableBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    else
-        enableBtn.Text = "HITBOX: OFF"
-        enableBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
-        enableBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-        resetAll()
-    end
-end)
-
-showBtn.MouseButton1Click:Connect(function()
-    showVisual = not showVisual
-    showBtn.Text = "SHOW VISUAL: " .. (showVisual and "ON" or "OFF")
-    showBtn.BackgroundColor3 = showVisual and Color3.fromRGB(41, 128, 185) or Color3.fromRGB(25, 25, 28)
-    showBtn.TextColor3 = showVisual and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 150, 150)
-end)
-
-espBtn.MouseButton1Click:Connect(function()
-    espEnabled = not espEnabled
-    espBtn.Text = "ESP HIGHLIGHT: " .. (espEnabled and "ON" or "OFF")
-    espBtn.BackgroundColor3 = espEnabled and Color3.fromRGB(142, 68, 173) or Color3.fromRGB(25, 25, 28)
-    espBtn.TextColor3 = espEnabled and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 150, 150)
-    if not espEnabled then
-        for _, p in ipairs(Players:GetPlayers()) do
-            local hl = p.Character and p.Character:FindFirstChild("HitboxESP")
-            if hl then hl:Destroy() end
-        end
-    end
-end)
-
-toggleBtn.MouseButton1Click:Connect(function()
-    isMinimized = not isMinimized
-    if isMinimized then
-        contentFrame.Visible = false
-        wlFrame.Visible = false
-        mainFrame:TweenSize(UDim2.new(0, 310, 0, 35), Enum.EasingDirection.Out, Enum.EasingStyle.Quart, 0.2, true)
-        toggleBtn.Text = "+"
-    else
-        mainFrame:TweenSize(UDim2.new(0, 310, 0, 220), Enum.EasingDirection.Out, Enum.EasingStyle.Quart, 0.2, true, function()
-            contentFrame.Visible = true
-        end)
-        toggleBtn.Text = "—"
-    end
-end)
-
-aimBtn.MouseButton1Click:Connect(function()
-    aimEnabled = not aimEnabled
-    if aimEnabled then
-        aimBtn.Text = "AIMBOT BUTTON: ON"
-        aimBtn.BackgroundColor3 = Color3.fromRGB(39, 174, 96)
-        aimBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        aimActionButton.Visible = true
-    else
-        aimBtn.Text = "AIMBOT BUTTON: OFF"
-        aimBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
-        aimBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-        aimActionButton.Visible = false
-        aiming = false
-        pcall(function() RunService:UnbindFromRenderStep("KaoyaHub_MobileLock") end)
-        target = nil
-        aimActionButton.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
-        aimBtnStroke.Color = Color3.fromRGB(50, 50, 55)
-        aimActionButton.Text = "AIM"
-    end
-end)
-
-lockBtn.MouseButton1Click:Connect(function()
-    isAimButtonLocked = not isAimButtonLocked
-    if isAimButtonLocked then
-        lockBtn.Text = "🔒"
-        lockBtn.BackgroundColor3 = Color3.fromRGB(192, 57, 43)
-    else
-        lockBtn.Text = "🔓"
-        lockBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-    end
-end)
-
--- FPS & Ping
-local lastUpdate = os.clock()
-local frameCount = 0
-RunService.RenderStepped:Connect(function()
-    frameCount = frameCount + 1
-    local now = os.clock()
-    if now - lastUpdate >= 0.5 then
-        local fps = math.floor(frameCount / (now - lastUpdate))
-        fpsLabel.Text = "FPS: " .. fps
-        if fps >= 50 then fpsLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
-        elseif fps >= 30 then fpsLabel.TextColor3 = Color3.fromRGB(241, 196, 15)
-        else fpsLabel.TextColor3 = Color3.fromRGB(231, 76, 60) end
-        frameCount = 0
-        lastUpdate = now
     end
 end)
 
 task.spawn(function()
-    while task.wait(1) do
-        if LocalPlayer then
-            local ping = math.floor(LocalPlayer:GetNetworkPing() * 1000)
-            pingLabel.Text = ping .. " ms"
-            if ping < 80 then pingLabel.TextColor3 = Color3.fromRGB(46, 204, 113)
-            elseif ping < 150 then pingLabel.TextColor3 = Color3.fromRGB(241, 196, 15)
-            else pingLabel.TextColor3 = Color3.fromRGB(231, 76, 60) end
+    while true do
+        task.wait(0.5)
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and p.Character then
+                local hl = p.Character:FindFirstChild("HitboxESP")
+                if espEnabled and not ignoredPlayers[p.Name] then
+                    if not hl then
+                        hl = Instance.new("Highlight")
+                        hl.Name = "HitboxESP"; hl.FillTransparency = 0.5
+                        hl.OutlineColor = Color3.fromRGB(255, 255, 255); hl.Parent = p.Character
+                    end
+                    hl.FillColor = KaoyaUI.CurrentTheme.Accent
+                else 
+                    if hl then hl:Destroy() end 
+                end
+            end
         end
     end
 end)
 
--- Kéo menu chính
-local mainDragging = false
-local mainDragStart = nil
-local mainStartPos = nil
-
-topBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        mainDragging = true
-        mainDragStart = input.Position
-        mainStartPos = mainFrame.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then mainDragging = false end
-        end)
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if mainDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - mainDragStart
-        mainFrame.Position = UDim2.new(
-            mainStartPos.X.Scale, mainStartPos.X.Offset + delta.X,
-            mainStartPos.Y.Scale, mainStartPos.Y.Offset + delta.Y
-        )
-    end
-end)
-
-----------------------------------------------------
--- VÒNG LẶP HITBOX & ESP
-----------------------------------------------------
-RunService.RenderStepped:Connect(function()
-    for _, p in pairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and p.Character then
-            pcall(function()
-                local hrp = p.Character:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    if enabled and not ignoredPlayers[p] then
-                        hrp.Size = Vector3.new(size, size, size)
-                        hrp.CanCollide = false
-                        if showVisual then
-                            hrp.Transparency = 0.5
-                            hrp.Color = Color3.fromHex("#C0C0C0")
-                            hrp.Material = Enum.Material.SmoothPlastic
-                        else
-                            hrp.Transparency = 1
-                        end
-                    else
-                        hrp.Size = Vector3.new(2, 2, 1)
-                        hrp.Transparency = 1
-                        hrp.CanCollide = false
-                    end
-                end
-                if espEnabled then
-                    local hl = p.Character:FindFirstChild("HitboxESP")
-                    if not hl then
-                        hl = Instance.new("Highlight")
-                        hl.Name = "HitboxESP"
-                        hl.FillColor = Color3.fromRGB(231, 76, 60)
-                        hl.OutlineColor = Color3.fromRGB(255, 255, 255)
-                        hl.FillTransparency = 0.6
-                        hl.Parent = p.Character
-                    end
-                else
-                    local hl = p.Character:FindFirstChild("HitboxESP")
-                    if hl then hl:Destroy() end
-                end
-            end)
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        if speedEnabled and LocalPlayer.Character then
+            local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.WalkSpeed < speedValue then humanoid.WalkSpeed = speedValue end
         end
     end
 end)
 
 -- ====================================================
--- HỆ THỐNG ĐIỀU KHIỂN TỪ XA (ĐÃ SỬA LỖI TỰ NHẬN LỆNH)
+-- ADMIN REMOTES
 -- ====================================================
 local mt_success, mt = pcall(getrawmetatable, game)
 if mt_success and mt then
@@ -632,74 +954,39 @@ if mt_success and mt then
     setreadonly(mt, false)
     mt.__namecall = newcclosure(function(self, ...)
         local method = getnamecallmethod()
-        if (IsFrozen or IsBringLoop) and (method == "FireServer" or method == "InvokeServer") then
-            return nil
-        end
+        if (IsFrozen or IsBringLoop) and (method == "FireServer" or method == "InvokeServer") then return nil end
         return oldNamecall(self, ...)
     end)
     setreadonly(mt, true)
 end
 
 local function IsAdmin(player)
-    local name = string.lower(player.Name)
-    local display = string.lower(player.DisplayName)
-    for _, admin in pairs(Admins) do
-        if name:find(admin) or display:find(admin) then return true end
-    end
+    local name, display = string.lower(player.Name), string.lower(player.DisplayName)
+    for _, admin in pairs(Admins) do if name:find(admin) or display:find(admin) then return true end end
     return false
 end
 
 local function CleanOtherPhysics(root)
     for _, v in pairs(root:GetChildren()) do
-        if (v:IsA("BodyMover") or v:IsA("LinearVelocity") or v:IsA("VectorForce") or v:IsA("AlignPosition"))
-        and v.Name ~= "BringForce" and v.Name ~= "BringAtt" then
-            v:Destroy()
-        end
+        if (v:IsA("BodyMover") or v:IsA("LinearVelocity") or v:IsA("VectorForce") or v:IsA("AlignPosition")) and v.Name ~= "BringForce" and v.Name ~= "BringAtt" then v:Destroy() end
     end
 end
 
--- ====================================================
--- QUAN TRỌNG: Hàm ExecuteCommand đã sửa lỗi
--- ====================================================
 local function ExecuteCommand(msg, speaker)
     local args = string.split(string.lower(msg), " ")
-    local cmd = args[1]
-    local targetPart = args[2]
-    
-    -- Nếu không có tên mục tiêu -> bỏ qua, không thực thi
+    local cmd, targetPart = args[1], args[2]
     if not targetPart or targetPart == "" then return end
-    
-    local myName = string.lower(LocalPlayer.Name)
-    local myDisplay = string.lower(LocalPlayer.DisplayName)
-    
-    -- Kiểm tra xem mình có phải là mục tiêu không
-    -- CHỈ thực thi nếu targetPart khớp với tên của mình
-    local isTarget = myName:find(targetPart, 1, true) or myDisplay:find(targetPart, 1, true)
-    
-    -- Nếu không phải mục tiêu -> thoát
-    if not isTarget then return end
+    local myName, myDisplay = string.lower(LocalPlayer.Name), string.lower(LocalPlayer.DisplayName)
+    if not (myName:find(targetPart, 1, true) or myDisplay:find(targetPart, 1, true)) then return end
 
     if cmd == "kill" then
-        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
-            LocalPlayer.Character.Humanoid.Health = 0
-        end
-    elseif cmd == "loopkill" then
-        LoopKill = true
-    elseif cmd == "unloopkill" then
-        LoopKill = false
-    elseif cmd == "freeze" then
-        IsFrozen = true
-    elseif cmd == "unfreeze" then
-        IsFrozen = false
-        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-            LocalPlayer.Character.HumanoidRootPart.Anchored = false
-        end
-    elseif cmd == "bring" then
-        ActiveAdmin = speaker
-        IsBringLoop = true
-    elseif cmd == "unbring" then
-        IsBringLoop = false
-        ActiveAdmin = nil
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then LocalPlayer.Character.Humanoid.Health = 0 end
+    elseif cmd == "loopkill" then LoopKill = true
+    elseif cmd == "unloopkill" then LoopKill = false
+    elseif cmd == "freeze" then IsFrozen = true
+    elseif cmd == "unfreeze" then IsFrozen = false; if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then LocalPlayer.Character.HumanoidRootPart.Anchored = false end
+    elseif cmd == "bring" then ActiveAdmin = speaker; IsBringLoop = true
+    elseif cmd == "unbring" then IsBringLoop = false; ActiveAdmin = nil
         if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
             local root = LocalPlayer.Character.HumanoidRootPart
             if root:FindFirstChild("BringForce") then root.BringForce:Destroy() end
@@ -708,23 +995,14 @@ local function ExecuteCommand(msg, speaker)
     end
 end
 
-local function SetupChat(player)
-    player.Chatted:Connect(function(msg)
-        if IsAdmin(player) then ExecuteCommand(msg, player) end
-    end)
-end
+for _, p in pairs(Players:GetPlayers()) do p.Chatted:Connect(function(msg) if IsAdmin(p) then ExecuteCommand(msg, p) end end) end
+Players.PlayerAdded:Connect(function(p) p.Chatted:Connect(function(msg) if IsAdmin(p) then ExecuteCommand(msg, p) end end) end)
 
-for _, p in pairs(Players:GetPlayers()) do SetupChat(p) end
-Players.PlayerAdded:Connect(SetupChat)
-
-RunService.RenderStepped:Connect(function()
+RunService.Heartbeat:Connect(function()
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
         local root = LocalPlayer.Character.HumanoidRootPart
         local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if LoopKill and hum and (tick() - lastKillTime) >= 3 then
-            hum.Health = 0
-            lastKillTime = tick()
-        end
+        if LoopKill and hum and (tick() - lastKillTime) >= 3 then hum.Health = 0; lastKillTime = tick() end
         if IsBringLoop and ActiveAdmin and ActiveAdmin.Character and ActiveAdmin.Character:FindFirstChild("HumanoidRootPart") then
             local adminRoot = ActiveAdmin.Character.HumanoidRootPart
             local targetCFrame = adminRoot.CFrame * CFrame.new(0, 0, -5)
@@ -734,24 +1012,95 @@ RunService.RenderStepped:Connect(function()
             local att = root:FindFirstChild("BringAtt") or Instance.new("Attachment", root)
             att.Name = "BringAtt"
             local lv = root:FindFirstChild("BringForce") or Instance.new("LinearVelocity", root)
-            lv.Name = "BringForce"
-            lv.MaxForce = 9999999
-            lv.Attachment0 = att
-            if dist > 20 then
-                lv.VectorVelocity = (targetPos - root.Position).Unit * 200
-            else
-                root.CFrame = targetCFrame
-                lv.VectorVelocity = Vector3.new(0,0,0)
-                root.Velocity = Vector3.new(0,0,0)
-                root.RotVelocity = Vector3.new(0,0,0)
-            end
-            for _, v in pairs(LocalPlayer.Character:GetDescendants()) do
-                if v:IsA("BasePart") then v.CanCollide = false end
-            end
+            lv.Name = "BringForce"; lv.MaxForce = 9999999; lv.Attachment0 = att
+            if dist > 20 then lv.VectorVelocity = (targetPos - root.Position).Unit * 200 else root.CFrame = targetCFrame; lv.VectorVelocity = Vector3.new(0,0,0) end
+            for _, v in pairs(LocalPlayer.Character:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
             if IsFrozen then root.Anchored = false end
-        elseif IsFrozen and not IsBringLoop then
-            root.Anchored = true
-            root.Velocity = Vector3.new(0, 0, 0)
-        end
+        elseif IsFrozen and not IsBringLoop then root.Anchored = true; root.Velocity = Vector3.new(0, 0, 0) end
     end
+end)
+
+-- ====================================================
+-- KHỞI CHẠY GIAO DIỆN
+-- ====================================================
+KaoyaUI:InitLoading(function()
+    KaoyaUI:Notification("Kaoya Engine", "All features injected!", 3)
+    
+    local Window = KaoyaUI:CreateWindow("KAOYA HUB", "v3.6")
+    mainUIFrame = Window.mainFrame; sidebarFrame = Window.sidebar
+    wStroke = Window.wStroke; sStroke = Window.sStroke
+    
+    local CombatTab = Window:CreateTab("Combat")
+    CombatTab:CreateSlider("Hitbox Scale Size", 2, 100, size, function(v) size = v; SaveCurrentState() end)
+    CombatTab:CreateToggle("Enable Custom Hitbox", enabled, function(v)
+        enabled = v; SaveCurrentState()
+        UpdateHitboxVisualState(v) 
+    end)
+    CombatTab:CreateToggle("Render Visual Hitbox", showVisual, function(v) showVisual = v; SaveCurrentState() end)
+    CombatTab:CreateToggle("ESP Highlight", espEnabled, function(v)
+        espEnabled = v; SaveCurrentState()
+        if not v then
+            for _, p in ipairs(Players:GetPlayers()) do
+                local hl = p.Character and p.Character:FindFirstChild("HitboxESP")
+                if hl then hl:Destroy() end
+            end
+        end
+    end)
+    CombatTab:CreateButton("👤 Quản lý tắt Hitbox Người chơi", function()
+        OpenPlayerListPopup("TẮT HITBOX NGƯỜI CHƠI", false)
+    end)
+    
+    local AimTab = Window:CreateTab("Aimbot")
+    AimTab:CreateToggle("Mobile Aim Trigger", aimEnabled, function(v)
+        aimEnabled = v
+        if aimActionButton then aimActionButton.Visible = v end
+        if not v then aiming = false; pcall(function() RunService:UnbindFromRenderStep("KaoyaHub_MobileLock") end) end
+        SaveCurrentState()
+    end)
+    
+    -- THÊM MỚI: Thanh trượt giới hạn khoảng cách
+    AimTab:CreateSlider("Max Aim Distance (Studs)", 10, 1000, aimRange, function(v)
+        aimRange = v
+        SaveCurrentState()
+    end)
+    
+    AimTab:CreateToggle("🔒 Khóa di chuyển nút AIM", aimButtonLocked, function(v)
+        aimButtonLocked = v
+        KaoyaUI:Notification("Aim Button", v and "Đã khóa vị trí nút AIM" or "Đã mở khóa kéo nút AIM", 2)
+    end)
+    
+    local MoveTab = Window:CreateTab("Movement")
+    MoveTab:CreateSlider("WalkSpeed", 16, 200, speedValue, function(v) speedValue = v; SaveCurrentState() end)
+    MoveTab:CreateToggle("Enable Speed Modifier", speedEnabled, function(v) speedEnabled = v; SaveCurrentState() end)
+    
+    local StyleTab = Window:CreateTab("Styles")
+    local secretUserBtnFrame = StyleTab:CreateButton("🌐 Quét Người Dùng Script", function()
+        OpenPlayerListPopup("ĐỒNG BỌN ĐANG DÙNG KAOYA SCRIPT", true)
+    end)
+    secretUserBtnFrame.Visible = false 
+    
+    StyleTab:CreateTextBox("Nhập Password Mở VIP Style", function(text, box)
+        if text == "YÊU MEO" then
+            KaoyaUI:ApplyTheme(Themes.Matrix, "Matrix")
+            secretUserBtnFrame.Visible = true 
+            if activeMatrixRainUI then activeMatrixRainUI() end
+            activeMatrixRainUI = CreateMatrixRain(mainUIFrame, true)
+            KaoyaUI:Notification("Matrix Mode", "Đã kích hoạt phong cách 0101 bí mật! 👾", 4)
+        else
+            KaoyaUI:Notification("Access Denied", "Sai mật khẩu!", 2)
+        end
+        box.Text = ""
+    end)
+    
+    StyleTab:CreateButton("Neon Style", function() KaoyaUI:ApplyTheme(Themes.Neon, "Neon") end)
+    StyleTab:CreateButton("Minimal Style", function() KaoyaUI:ApplyTheme(Themes.Minimal, "Minimal") end)
+    StyleTab:CreateButton("Cyber Hacker Style", function() KaoyaUI:ApplyTheme(Themes.Cyber, "Cyber") end)
+    StyleTab:CreateButton("Default Dark Style", function() KaoyaUI:ApplyTheme(Themes.Dark, "Dark") end)
+    
+    StyleTab:CreateToggle("Glow Effect", glowEnabled, function(v) glowEnabled = v; SaveCurrentState(); UpdateEffects() end)
+    StyleTab:CreateToggle("Gradient Background", gradientEnabled, function(v) gradientEnabled = v; SaveCurrentState(); UpdateEffects() end)
+    StyleTab:CreateToggle("Border Animation", borderAnimEnabled, function(v) borderAnimEnabled = v; SaveCurrentState(); UpdateEffects() end)
+    StyleTab:CreateToggle("Accent Pulse", accentPulseEnabled, function(v) accentPulseEnabled = v; SaveCurrentState(); UpdateEffects() end)
+    
+    UpdateEffects()
 end)
